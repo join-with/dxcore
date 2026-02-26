@@ -1,0 +1,241 @@
+name: E2E Nx
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "28.3.1"
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Cache coordinator deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-coordinator-oss/deps
+            apps/dxcore-coordinator-oss/_build
+          key: coordinator-deps-prod-${{ hashFiles('apps/dxcore-coordinator-oss/mix.lock') }}
+
+      - name: Cache CLI deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-agents-cli/deps
+            apps/dxcore-agents-cli/_build
+          key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
+
+      - name: Build coordinator binary
+        working-directory: apps/dxcore-coordinator-oss
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Build CLI binary
+        working-directory: apps/dxcore-agents-cli
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Upload coordinator binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxcore-agents-coordinator
+          path: apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux
+          if-no-files-found: error
+
+      - name: Upload CLI binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxcore-agents-cli
+          path: apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux
+          if-no-files-found: error
+
+  context:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.compute.outputs.token }}
+      coordinator_url: ${{ steps.compute.outputs.coordinator_url }}
+    steps:
+      - name: Compute shared context
+        id: compute
+        run: |
+          TOKEN=$(echo -n "${{ secrets.TS_OAUTH_SECRET }}${{ github.run_id }}" | sha256sum | head -c 40)
+          echo "token=tdx_ci_${TOKEN}" >> "$GITHUB_OUTPUT"
+          echo "coordinator_url=http://dxcore-nx-coord-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+  coordinator:
+    runs-on: ubuntu-latest
+    needs: [build, context]
+    timeout-minutes: 15
+    steps:
+      - name: Download coordinator binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dxcore-agents-coordinator
+
+      - name: Make binary executable
+        run: chmod +x dxcore_coordinator_oss_linux
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:dxcore-ci
+          hostname: dxcore-nx-coord-${{ github.run_id }}
+
+      - name: Expose coordinator on port 80 via Tailscale
+        run: sudo tailscale serve --bg --http 80 http://localhost:4000
+
+      - name: Generate secret key base
+        id: secret
+        run: echo "key=$(openssl rand -hex 32)" >> "$GITHUB_OUTPUT"
+
+      - name: Start coordinator
+        env:
+          DXCORE_AGENTS_TOKENS: "ci:${{ needs.context.outputs.token }}"
+          PHX_SERVER: "true"
+          SECRET_KEY_BASE: ${{ steps.secret.outputs.key }}
+        run: ./dxcore_coordinator_oss_linux
+
+  session:
+    runs-on: ubuntu-latest
+    needs: [build, context]
+    timeout-minutes: 10
+    outputs:
+      session_id: ${{ steps.create.outputs.session_id }}
+    steps:
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dxcore-agents-cli
+
+      - name: Make binary executable
+        run: chmod +x dxcore_agents_cli_linux
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:dxcore-ci
+          hostname: dxcore-nx-session-${{ github.run_id }}
+
+      - name: Wait for coordinator
+        run: |
+          ./dxcore_agents_cli_linux ci wait \
+            --coordinator=${{ needs.context.outputs.coordinator_url }}
+
+      - name: Create session
+        id: create
+        run: |
+          SESSION_ID=$(./dxcore_agents_cli_linux ci create-session \
+            --coordinator=${{ needs.context.outputs.coordinator_url }} \
+            --token=${{ needs.context.outputs.token }})
+          echo "session_id=${SESSION_ID}" >> "$GITHUB_OUTPUT"
+
+  agents:
+    runs-on: ubuntu-latest
+    needs: [build, context, session]
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dxcore-agents-cli
+
+      - name: Make binary executable
+        run: chmod +x dxcore_agents_cli_linux
+
+      - name: Install example repo dependencies
+        run: cd examples/nx-monorepo && npm install
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:dxcore-ci
+          hostname: dxcore-nx-agent-${{ matrix.agent }}-${{ github.run_id }}
+
+      - name: Start agent
+        run: |
+          ./dxcore_agents_cli_linux agent \
+            --coordinator=${{ needs.context.outputs.coordinator_url }} \
+            --agent-id=agent-${{ matrix.agent }} \
+            --session-id=${{ needs.session.outputs.session_id }} \
+            --token=${{ needs.context.outputs.token }} \
+            --work-dir=examples/nx-monorepo
+        timeout-minutes: 5
+
+  dispatcher:
+    runs-on: ubuntu-latest
+    needs: [build, context, session]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: dxcore-agents-cli
+
+      - name: Make binary executable
+        run: chmod +x dxcore_agents_cli_linux
+
+      - name: Install example repo dependencies
+        run: cd examples/nx-monorepo && npm install
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:dxcore-ci
+          hostname: dxcore-nx-dispatch-${{ github.run_id }}
+
+      - name: Dispatch tasks
+        run: |
+          set -o pipefail
+          npx nx show projects --json --cwd=examples/nx-monorepo \
+            | ./dxcore_agents_cli_linux dispatch \
+              --build-system=nx \
+              --coordinator=${{ needs.context.outputs.coordinator_url }} \
+              --session-id=${{ needs.session.outputs.session_id }} \
+              --token=${{ needs.context.outputs.token }}
+        timeout-minutes: 5
+
+      - name: Shut down coordinator
+        if: always()
+        run: |
+          ./dxcore_agents_cli_linux ci shutdown \
+            --coordinator=${{ needs.context.outputs.coordinator_url }} \
+            --token=${{ needs.context.outputs.token }}

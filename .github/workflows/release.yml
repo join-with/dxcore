@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "28.3.1"
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Cache coordinator deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-coordinator-oss/deps
+            apps/dxcore-coordinator-oss/_build
+          key: coordinator-deps-prod-${{ hashFiles('apps/dxcore-coordinator-oss/mix.lock') }}
+
+      - name: Cache CLI deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-agents-cli/deps
+            apps/dxcore-agents-cli/_build
+          key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
+
+      - name: Build coordinator binary
+        working-directory: apps/dxcore-coordinator-oss
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Build CLI binary
+        working-directory: apps/dxcore-agents-cli
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Prepare release assets
+        run: |
+          cp apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux dxcore-agents-coordinator-linux-x86_64
+          cp apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux dxcore-agents-cli-linux-x86_64
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dxcore-agents-coordinator-linux-x86_64 \
+            dxcore-agents-cli-linux-x86_64 \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
+
+  sync-actions:
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      matrix:
+        action:
+          - coordinator
+          - agent
+          - dispatch
+          - shutdown
+    steps:
+      - name: Checkout action repo
+        uses: actions/checkout@v4
+        with:
+          repository: join-with/dxcore-${{ matrix.action }}-action
+          token: ${{ secrets.SPLIT_REPO_TOKEN }}
+
+      - name: Tag release
+        run: |
+          git tag "${{ github.ref_name }}"
+          MAJOR=$(echo "${{ github.ref_name }}" | grep -oP '^v\d+')
+          if [ -z "$MAJOR" ]; then
+            echo "::error::Could not extract major version from tag ${{ github.ref_name }}"
+            exit 1
+          fi
+          git tag -f "$MAJOR"
+          git push origin --tags --force

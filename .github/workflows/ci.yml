@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "28.3.1"
+
+      - name: Cache core deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/dxcore-core/deps
+            packages/dxcore-core/_build
+          key: core-deps-test-${{ hashFiles('packages/dxcore-core/mix.lock') }}
+
+      - name: Cache coordinator deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-coordinator-oss/deps
+            apps/dxcore-coordinator-oss/_build
+          key: coordinator-deps-test-${{ hashFiles('apps/dxcore-coordinator-oss/mix.lock') }}
+
+      - name: Cache CLI deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-agents-cli/deps
+            apps/dxcore-agents-cli/_build
+          key: cli-deps-test-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
+
+      - name: Test core
+        working-directory: packages/dxcore-core
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          mix test
+
+      - name: Test coordinator
+        working-directory: apps/dxcore-coordinator-oss
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          mix test
+
+      - name: Test CLI
+        working-directory: apps/dxcore-agents-cli
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+          mix format --check-formatted
+          mix test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "28.3.1"
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Cache coordinator deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-coordinator-oss/deps
+            apps/dxcore-coordinator-oss/_build
+          key: coordinator-deps-prod-${{ hashFiles('apps/dxcore-coordinator-oss/mix.lock') }}
+
+      - name: Cache CLI deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/dxcore-agents-cli/deps
+            apps/dxcore-agents-cli/_build
+          key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
+
+      - name: Build coordinator binary
+        working-directory: apps/dxcore-coordinator-oss
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Build CLI binary
+        working-directory: apps/dxcore-agents-cli
+        run: |
+          mix deps.get
+          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+
+      - name: Upload coordinator binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxcore-agents-coordinator
+          path: apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux
+          if-no-files-found: error
+
+      - name: Upload CLI binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxcore-agents-cli
+          path: apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux
+          if-no-files-found: error

@@ -1,0 +1,76 @@
+name: E2E Actions
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install example repo dependencies
+        run: cd examples/turbo-monorepo && pnpm install --frozen-lockfile
+
+      - name: Setup Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:dxcore-ci
+          hostname: dxcore-actions-e2e-${{ github.run_id }}
+
+      - name: Get latest release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release view --json tagName --jq .tagName)
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Start coordinator
+        uses: join-with/dxcore-coordinator-action@v0
+        id: coordinator
+        with:
+          version: ${{ steps.release.outputs.tag }}
+          tailscale-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          tailscale-oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+
+      - name: Dispatch tasks
+        uses: join-with/dxcore-dispatch-action@v0
+        with:
+          version: ${{ steps.release.outputs.tag }}
+          coordinator-url: ${{ steps.coordinator.outputs.coordinator-url }}
+          token: ${{ steps.coordinator.outputs.token }}
+          work-dir: examples/turbo-monorepo
+          build-command: npx turbo run build test lint --dry=json
+
+      - name: Run agent 1
+        uses: join-with/dxcore-agent-action@v0
+        with:
+          version: ${{ steps.release.outputs.tag }}
+          coordinator-url: ${{ steps.coordinator.outputs.coordinator-url }}
+          session-id: ${{ steps.coordinator.outputs.session-id }}
+          token: ${{ steps.coordinator.outputs.token }}
+          agent-id: agent-1
+          work-dir: examples/turbo-monorepo
+
+      - name: Shutdown coordinator
+        if: always()
+        uses: join-with/dxcore-shutdown-action@v0
+        with:
+          version: ${{ steps.release.outputs.tag }}
+          coordinator-url: ${{ steps.coordinator.outputs.coordinator-url }}
+          token: ${{ steps.coordinator.outputs.token }}
