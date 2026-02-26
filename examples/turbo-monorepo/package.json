@@ -1,0 +1,13 @@
+{
+  "name": "turbo-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@test/app-b",
+  "version": "1.0.0",
+  "dependencies": {
+    "@test/shared": "workspace:*"
+  },
+  "scripts": {
+    "build": "mkdir -p dist && cp src/index.js dist/index.js",
+    "test": "echo 'app-b tests passed'",
+    "lint": "echo 'app-b lint passed'"
+  }
+}

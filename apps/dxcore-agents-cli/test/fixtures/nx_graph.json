@@ -1,0 +1,52 @@
+{
+  "graph": {
+    "nodes": {},
+    "dependencies": {}
+  },
+  "tasks": {
+    "roots": ["mylib:build"],
+    "tasks": {
+      "mylib:build": {
+        "id": "mylib:build",
+        "target": {"project": "mylib", "target": "build"},
+        "projectRoot": "packages/mylib",
+        "outputs": ["dist/mylib"],
+        "overrides": {},
+        "parallelism": true,
+        "cache": true,
+        "continuous": false
+      },
+      "myapp:build": {
+        "id": "myapp:build",
+        "target": {"project": "myapp", "target": "build"},
+        "projectRoot": "packages/myapp",
+        "outputs": ["dist/myapp"],
+        "overrides": {},
+        "parallelism": true,
+        "cache": true,
+        "continuous": false
+      },
+      "myapp:test": {
+        "id": "myapp:test",
+        "target": {"project": "myapp", "target": "test"},
+        "projectRoot": "packages/myapp",
+        "outputs": [],
+        "overrides": {},
+        "parallelism": true,
+        "cache": true,
+        "continuous": false
+      }
+    },
+    "dependencies": {
+      "mylib:build": [],
+      "myapp:build": ["mylib:build"],
+      "myapp:test": ["myapp:build"]
+    },
+    "continuousDependencies": {
+      "mylib:build": [],
+      "myapp:build": [],
+      "myapp:test": []
+    }
+  },
+  "taskPlans": {}
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "clean-deps": {
+      "cache": false
+    },
+    "deps": {
+      "dependsOn": ["clean-deps"],
+      "inputs": ["mix.exs", "mix.lock"],
+      "outputs": ["deps/**"],
+      "env": ["MIX_ENV"]
+    },
+    "build": {
+      "dependsOn": ["deps"],
+      "inputs": ["mix.exs", "mix.lock", "lib/**", "config/**"],
+      "outputs": ["_build/**"],
+      "env": ["MIX_ENV"]
+    },
+    "test": {
+      "dependsOn": ["deps"],
+      "inputs": ["mix.exs", "mix.lock", "lib/**", "test/**", "config/**"],
+      "env": ["MIX_ENV"]
+    },
+    "lint": {
+      "dependsOn": ["deps"],
+      "inputs": ["mix.exs", "mix.lock", ".formatter.exs", "lib/**", "test/**", "config/**"]
+    }
+  }
+}

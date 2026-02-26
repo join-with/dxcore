@@ -1,0 +1,32 @@
+# Elixir build artifacts (per-app)
+_build/
+deps/
+cover/
+doc/
+*.ez
+
+# Burrito build output
+burrito_out/
+
+# Ignore escript binary
+dxcore_agents_cli
+
+# VM crash dumps
+erl_crash.dump
+
+# Editor and tooling
+.elixir_ls/
+.vscode/
+
+# Worktrees
+.worktrees/
+
+# Turbo cache
+.turbo/
+
+# JS dependencies
+node_modules/
+examples/*/packages/*/dist/
+
+# Nx cache
+.nx/

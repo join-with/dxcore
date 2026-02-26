@@ -1,0 +1,36 @@
+{
+  "tasks": [
+    {
+      "taskId": "shared#build",
+      "task": "build",
+      "package": "shared",
+      "hash": "abc",
+      "command": "tsc",
+      "dependencies": [],
+      "dependents": ["app-e2e#test:shard-1/2", "app-e2e#test:shard-2/2"],
+      "cache": {"status": "MISS"}
+    },
+    {
+      "taskId": "app-e2e#test:shard-1/2",
+      "task": "test",
+      "package": "app-e2e",
+      "hash": "def",
+      "command": "vitest",
+      "dependencies": ["shared#build"],
+      "dependents": [],
+      "cache": {"status": "MISS"},
+      "shard": {"index": 1, "count": 2}
+    },
+    {
+      "taskId": "app-e2e#test:shard-2/2",
+      "task": "test",
+      "package": "app-e2e",
+      "hash": "def",
+      "command": "vitest",
+      "dependencies": ["shared#build"],
+      "dependents": [],
+      "cache": {"status": "MISS"},
+      "shard": {"index": 2, "count": 2}
+    }
+  ]
+}

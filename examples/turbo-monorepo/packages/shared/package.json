@@ -1,0 +1,9 @@
+{
+  "name": "@test/shared",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p dist && cp src/index.js dist/index.js",
+    "test": "echo 'shared tests passed'",
+    "lint": "echo 'shared lint passed'"
+  }
+}

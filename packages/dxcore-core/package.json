@@ -1,0 +1,14 @@
+{
+  "name": "dxcore-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DxCore shared library - scheduler, task graph, plugin behaviour",
+  "scripts": {
+    "clean-deps": "rm -rf deps",
+    "deps": "mix deps.get",
+    "build": "mix compile --warnings-as-errors",
+    "test": "mix test",
+    "lint": "mix format --check-formatted",
+    "format": "mix format"
+  }
+}

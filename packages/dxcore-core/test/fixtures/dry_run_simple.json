@@ -1,0 +1,51 @@
+{
+  "id": "test-run-1",
+  "monorepo": true,
+  "packages": ["@repo/ui", "admin", "api"],
+  "tasks": [
+    {
+      "taskId": "@repo/ui#build",
+      "task": "build",
+      "package": "@repo/ui",
+      "hash": "abc123",
+      "command": "vite build",
+      "outputs": ["dist/**"],
+      "dependencies": [],
+      "dependents": ["admin#build", "api#build"],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "admin#build",
+      "task": "build",
+      "package": "admin",
+      "hash": "def456",
+      "command": "next build",
+      "outputs": [".next/**"],
+      "dependencies": ["@repo/ui#build"],
+      "dependents": ["admin#test"],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "api#build",
+      "task": "build",
+      "package": "api",
+      "hash": "ghi789",
+      "command": "tsc",
+      "outputs": ["dist/**"],
+      "dependencies": ["@repo/ui#build"],
+      "dependents": [],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "admin#test",
+      "task": "test",
+      "package": "admin",
+      "hash": "jkl012",
+      "command": "jest",
+      "outputs": ["coverage/**"],
+      "dependencies": ["admin#build"],
+      "dependents": [],
+      "cache": { "status": "MISS" }
+    }
+  ]
+}
