@@ -78,11 +78,20 @@ jobs:
           - dispatch
           - shutdown
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DXCORE_SYNC_APP_ID }}
+          private-key: ${{ secrets.DXCORE_SYNC_APP_PRIVATE_KEY }}
+          owner: join-with
+          repositories: dxcore-${{ matrix.action }}-action
+
       - name: Checkout action repo
         uses: actions/checkout@v4
         with:
           repository: join-with/dxcore-${{ matrix.action }}-action
-          token: ${{ secrets.SPLIT_REPO_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Tag release
         run: |
