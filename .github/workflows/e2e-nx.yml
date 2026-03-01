@@ -82,10 +82,13 @@ jobs:
     needs: [build, context]
     timeout-minutes: 15
     steps:
-      - name: Download coordinator binary
+      - name: Download coordinator release
         uses: actions/download-artifact@v4
         with:
           name: dxcore-agents-coordinator
+
+      - name: Make release executable
+        run: chmod +x bin/dxcore_coordinator_oss releases/*/elixir erts-*/bin/*
 
       - name: Setup Tailscale
         uses: tailscale/github-action@v4
