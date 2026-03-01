@@ -97,11 +97,11 @@ jobs:
             apps/dxcore-agents-cli/_build
           key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
 
-      - name: Build coordinator binary
+      - name: Build coordinator release
         working-directory: apps/dxcore-coordinator-oss
         run: |
           mix deps.get
-          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+          MIX_ENV=prod mix release --overwrite
 
       - name: Build CLI binary
         working-directory: apps/dxcore-agents-cli
@@ -109,11 +109,11 @@ jobs:
           mix deps.get
           BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
 
-      - name: Upload coordinator binary
+      - name: Upload coordinator release
         uses: actions/upload-artifact@v4
         with:
           name: dxcore-agents-coordinator
-          path: apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux
+          path: apps/dxcore-coordinator-oss/_build/prod/rel/dxcore_coordinator_oss
           if-no-files-found: error
 
       - name: Upload CLI binary

@@ -38,11 +38,11 @@ jobs:
             apps/dxcore-agents-cli/_build
           key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
 
-      - name: Build coordinator binary
+      - name: Build coordinator release
         working-directory: apps/dxcore-coordinator-oss
         run: |
           mix deps.get
-          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+          MIX_ENV=prod mix release --overwrite
 
       - name: Build CLI binary
         working-directory: apps/dxcore-agents-cli
@@ -50,11 +50,11 @@ jobs:
           mix deps.get
           BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
 
-      - name: Upload coordinator binary
+      - name: Upload coordinator release
         uses: actions/upload-artifact@v4
         with:
           name: dxcore-agents-coordinator
-          path: apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux
+          path: apps/dxcore-coordinator-oss/_build/prod/rel/dxcore_coordinator_oss
           if-no-files-found: error
 
       - name: Upload CLI binary
@@ -87,9 +87,6 @@ jobs:
         with:
           name: dxcore-agents-coordinator
 
-      - name: Make binary executable
-        run: chmod +x dxcore_coordinator_oss_linux
-
       - name: Setup Tailscale
         uses: tailscale/github-action@v4
         with:
@@ -110,7 +107,7 @@ jobs:
           DXCORE_AGENTS_TOKENS: "ci:${{ needs.context.outputs.token }}"
           PHX_SERVER: "true"
           SECRET_KEY_BASE: ${{ steps.secret.outputs.key }}
-        run: ./dxcore_coordinator_oss_linux
+        run: ./dxcore_coordinator_oss/bin/dxcore_coordinator_oss start
 
   session:
     runs-on: ubuntu-latest
