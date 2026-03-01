@@ -163,6 +163,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Download CLI binary
         uses: actions/download-artifact@v4
         with:
@@ -172,7 +175,7 @@ jobs:
         run: chmod +x dxcore_agents_cli_linux
 
       - name: Install example repo dependencies
-        run: cd examples/nx-monorepo && npm install
+        run: cd examples/nx-monorepo && pnpm install --frozen-lockfile
 
       - name: Setup Tailscale
         uses: tailscale/github-action@v4
@@ -189,6 +192,7 @@ jobs:
             --agent-id=agent-${{ matrix.agent }} \
             --session-id=${{ needs.session.outputs.session_id }} \
             --token=${{ needs.context.outputs.token }} \
+            --build-system=nx \
             --work-dir=examples/nx-monorepo
         timeout-minutes: 5
 
@@ -203,6 +207,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Download CLI binary
         uses: actions/download-artifact@v4
         with:
@@ -212,7 +219,7 @@ jobs:
         run: chmod +x dxcore_agents_cli_linux
 
       - name: Install example repo dependencies
-        run: cd examples/nx-monorepo && npm install
+        run: cd examples/nx-monorepo && pnpm install --frozen-lockfile
 
       - name: Setup Tailscale
         uses: tailscale/github-action@v4
@@ -225,12 +232,13 @@ jobs:
       - name: Dispatch tasks
         run: |
           set -o pipefail
-          npx nx show projects --json --cwd=examples/nx-monorepo \
-            | ./dxcore_agents_cli_linux dispatch \
-              --build-system=nx \
+          npx nx run-many -t build test lint --graph=stdout 2>/dev/null \
+            | ../../dxcore_agents_cli_linux dispatch \
               --coordinator=${{ needs.context.outputs.coordinator_url }} \
               --session-id=${{ needs.session.outputs.session_id }} \
-              --token=${{ needs.context.outputs.token }}
+              --token=${{ needs.context.outputs.token }} \
+              --build-system=nx
+        working-directory: examples/nx-monorepo
         timeout-minutes: 5
 
       - name: Shut down coordinator
