@@ -107,7 +107,7 @@ jobs:
           DXCORE_AGENTS_TOKENS: "ci:${{ needs.context.outputs.token }}"
           PHX_SERVER: "true"
           SECRET_KEY_BASE: ${{ steps.secret.outputs.key }}
-        run: ./dxcore_coordinator_oss/bin/dxcore_coordinator_oss start
+        run: ./bin/dxcore_coordinator_oss start
 
   session:
     runs-on: ubuntu-latest
