@@ -40,11 +40,11 @@ jobs:
             apps/dxcore-agents-cli/_build
           key: cli-deps-prod-${{ hashFiles('apps/dxcore-agents-cli/mix.lock') }}
 
-      - name: Build coordinator binary
+      - name: Build coordinator release
         working-directory: apps/dxcore-coordinator-oss
         run: |
           mix deps.get
-          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+          MIX_ENV=prod mix release --overwrite
 
       - name: Build CLI binary
         working-directory: apps/dxcore-agents-cli
@@ -54,7 +54,8 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          cp apps/dxcore-coordinator-oss/burrito_out/dxcore_coordinator_oss_linux dxcore-agents-coordinator-linux-x86_64
+          tar -czf dxcore-coordinator-oss-linux-x86_64.tar.gz \
+            -C apps/dxcore-coordinator-oss/_build/prod/rel dxcore_coordinator_oss
           cp apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux dxcore-agents-cli-linux-x86_64
 
       - name: Create GitHub Release
@@ -62,7 +63,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            dxcore-agents-coordinator-linux-x86_64 \
+            dxcore-coordinator-oss-linux-x86_64.tar.gz \
             dxcore-agents-cli-linux-x86_64 \
             --title "${{ github.ref_name }}" \
             --generate-notes
