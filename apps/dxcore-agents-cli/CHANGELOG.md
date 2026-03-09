@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.2.1
+
+### Patch Changes
+
+- 46e470f: Fix flaky await_exit test race condition by using Process.info(:monitored_by) to deterministically verify monitor establishment instead of timing-based sleep
+
 ## 0.2.0
 
 ### Minor Changes
