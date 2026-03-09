@@ -281,14 +281,53 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
   end
 
   describe "await_exit/1" do
+    # Deterministically wait until `monitoring_pid` has a monitor on `monitored_pid`.
+    # Uses Process.info/2 instead of timing-based sleeps to avoid race conditions.
+    defp wait_for_monitor(monitored_pid, monitoring_pid) do
+      case Process.info(monitored_pid, :monitored_by) do
+        {:monitored_by, monitors} ->
+          if monitoring_pid in monitors do
+            :ok
+          else
+            Process.sleep(1)
+            wait_for_monitor(monitored_pid, monitoring_pid)
+          end
+
+        nil ->
+          raise "Process #{inspect(monitored_pid)} exited before monitor was established"
+      end
+    end
+
     test "returns :normal when process exits normally" do
-      pid = spawn(fn -> Process.sleep(50) end)
-      assert :normal = Dispatcher.await_exit(pid)
+      test_pid = self()
+      pid = spawn(fn -> receive do: (:go -> :ok) end)
+
+      task =
+        Task.async(fn ->
+          result = Dispatcher.await_exit(pid)
+          send(test_pid, {:result, result})
+          result
+        end)
+
+      wait_for_monitor(pid, task.pid)
+      send(pid, :go)
+      assert_receive {:result, :normal}, 5_000
     end
 
     test "returns exit reason when process exits abnormally" do
-      pid = spawn(fn -> Process.sleep(50) && exit({:shutdown, :failed}) end)
-      assert {:shutdown, :failed} = Dispatcher.await_exit(pid)
+      test_pid = self()
+      pid = spawn(fn -> receive do: (:go -> exit({:shutdown, :failed})) end)
+
+      task =
+        Task.async(fn ->
+          result = Dispatcher.await_exit(pid)
+          send(test_pid, {:result, result})
+          result
+        end)
+
+      wait_for_monitor(pid, task.pid)
+      send(pid, :go)
+      assert_receive {:result, {:shutdown, :failed}}, 5_000
     end
 
     test "process is not linked to caller" do
