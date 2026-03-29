@@ -235,7 +235,39 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
 
       assert_receive {:ws_call,
                       {:push_and_wait, "submit_graph",
-                       %{"run_id" => "r1", "tasks" => [%{"taskId" => "t1"}]}}}
+                       %{
+                         "run_id" => "r1",
+                         "tasks" => [%{"taskId" => "t1"}],
+                         "shard_config" => %{}
+                       }}}
+    end
+
+    test "joined with tasks submits graph including shard_config" do
+      tasks = [%{"taskId" => "t1"}]
+      shard_config = %{"e2e-app#test" => 4}
+      test_pid = self()
+
+      client =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, {:push_and_wait, _event, _payload} = msg} ->
+              GenServer.reply(from, {:ok, %{"total_tasks" => 1, "cached_tasks" => 0}})
+              send(test_pid, {:ws_call, msg})
+          end
+        end)
+
+      state = base_state(%{client: client, tasks: tasks, shard_config: shard_config})
+      msg = {:joined, "dispatcher:s1"}
+      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert new_state.tasks == nil
+
+      assert_receive {:ws_call,
+                      {:push_and_wait, "submit_graph",
+                       %{
+                         "run_id" => "r1",
+                         "tasks" => [%{"taskId" => "t1"}],
+                         "shard_config" => %{"e2e-app#test" => 4}
+                       }}}
     end
 
     test "joined without tasks is a reconnect" do

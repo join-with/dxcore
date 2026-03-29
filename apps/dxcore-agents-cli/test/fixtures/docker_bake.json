@@ -1,0 +1,27 @@
+{
+  "group": {
+    "default": {
+      "targets": ["api", "worker", "gateway"]
+    }
+  },
+  "target": {
+    "api": {
+      "dockerfile": "services/api/Dockerfile",
+      "context": "services/api",
+      "tags": ["myrepo/api:latest", "myrepo/api:v1.2.3"]
+    },
+    "worker": {
+      "dockerfile": "services/worker/Dockerfile",
+      "context": "services/worker",
+      "tags": ["myrepo/worker:latest"]
+    },
+    "gateway": {
+      "dockerfile": "services/gateway/Dockerfile",
+      "context": "services/gateway",
+      "tags": ["myrepo/gateway:latest"],
+      "contexts": {
+        "api": "target:api"
+      }
+    }
+  }
+}

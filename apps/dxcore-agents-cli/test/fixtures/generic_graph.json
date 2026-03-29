@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "taskId": "migrate",
+      "package": "db",
+      "task": "migrate",
+      "command": "mix ecto.migrate",
+      "dependencies": []
+    },
+    {
+      "taskId": "seed",
+      "package": "db",
+      "task": "seed",
+      "command": "mix run priv/seeds.exs",
+      "dependencies": ["migrate"]
+    },
+    {
+      "taskId": "test-api",
+      "package": "api",
+      "task": "test",
+      "command": "cargo test --release",
+      "dependencies": ["migrate", "seed"]
+    }
+  ]
+}

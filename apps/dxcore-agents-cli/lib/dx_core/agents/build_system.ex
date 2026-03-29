@@ -40,5 +40,7 @@ defmodule DxCore.Agents.BuildSystem do
   @doc "Resolve a build system name to its adapter module."
   def resolve("turbo"), do: {:ok, DxCore.Agents.BuildSystem.Turbo}
   def resolve("nx"), do: {:ok, DxCore.Agents.BuildSystem.Nx}
+  def resolve("generic"), do: {:ok, DxCore.Agents.BuildSystem.Generic}
+  def resolve("docker"), do: {:ok, DxCore.Agents.BuildSystem.Docker}
   def resolve(other), do: {:error, "Unknown build system: #{other}"}
 end

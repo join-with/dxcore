@@ -42,9 +42,27 @@ defmodule DxCore.Agents.CLI do
       ["ci" | rest] ->
         DxCore.Agents.CLI.Ci.run(rest)
 
+      ["config", "--show" | rest] ->
+        run_config_show(rest)
+
       _ ->
-        IO.puts("Usage: dxcore-agents <agent|dispatch|ci> [options]")
+        IO.puts("Usage: dxcore-agents <agent|dispatch|ci|config> [options]")
         System.halt(1)
+    end
+  end
+
+  defp run_config_show(args) do
+    {opts, _, _} = OptionParser.parse(args, strict: [work_dir: :string], aliases: [w: :work_dir])
+    work_dir = Keyword.get(opts, :work_dir, ".")
+    config = DxCore.Agents.ShardConfig.scan(work_dir)
+
+    case DxCore.Agents.ShardConfig.format_summary(config) do
+      [] ->
+        IO.puts("No shard configuration found. Add dxcore.json files to package directories.")
+
+      lines ->
+        IO.puts("Shard configuration:")
+        Enum.each(lines, &IO.puts("  #{&1}"))
     end
   end
 end

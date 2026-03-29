@@ -9,11 +9,13 @@ defmodule DxCore.Agents.BuildSystem.Nx do
 
   @behaviour DxCore.Agents.BuildSystem
 
+  alias DxCore.Agents.BuildSystem.GraphHelpers
+
   @impl true
   def parse_graph(json) do
     case Jason.decode(json) do
       {:ok, %{"tasks" => %{"tasks" => tasks_map, "dependencies" => deps_map}}} ->
-        dependents_map = invert_dependencies(deps_map)
+        dependents_map = GraphHelpers.invert_dependencies(deps_map)
 
         tasks =
           tasks_map
@@ -48,13 +50,5 @@ defmodule DxCore.Agents.BuildSystem.Nx do
       "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}
     }
-  end
-
-  defp invert_dependencies(deps_map) do
-    Enum.reduce(deps_map, %{}, fn {task_id, dep_ids}, acc ->
-      Enum.reduce(dep_ids, acc, fn dep_id, inner_acc ->
-        Map.update(inner_acc, dep_id, [task_id], &[task_id | &1])
-      end)
-    end)
   end
 end

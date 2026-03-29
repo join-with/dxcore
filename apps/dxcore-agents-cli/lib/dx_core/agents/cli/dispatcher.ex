@@ -3,7 +3,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   use GenServer
 
-  defstruct [:client, :ws_monitor, :session_id, :run_id, :timeout_ms, :tasks]
+  defstruct [:client, :ws_monitor, :session_id, :run_id, :timeout_ms, :tasks, :shard_config]
 
   @default_timeout_s 900
 
@@ -14,6 +14,13 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     token = Keyword.fetch!(opts, :token)
     timeout_ms = Keyword.get(opts, :timeout, @default_timeout_s) * 1000
     build_system = Keyword.get(opts, :build_system, "turbo")
+
+    work_dir = Keyword.get(opts, :work_dir, ".")
+    shard_config = DxCore.Agents.ShardConfig.scan(work_dir)
+
+    if map_size(shard_config) > 0 do
+      IO.puts("[dispatcher:#{session_id}] Loaded shard config: #{map_size(shard_config)} entries")
+    end
 
     IO.puts("[dispatcher:#{session_id}] Reading task graph from stdin (#{build_system})...")
 
@@ -31,7 +38,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
             session_id: session_id,
             token: token,
             tasks: tasks,
-            timeout_ms: timeout_ms
+            timeout_ms: timeout_ms,
+            shard_config: shard_config
           })
 
         case await_exit(pid) do
@@ -99,7 +107,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
         session_id: config.session_id,
         run_id: run_id,
         timeout_ms: config.timeout_ms,
-        tasks: config.tasks
+        tasks: config.tasks,
+        shard_config: config[:shard_config] || %{}
       })
 
     {:ok, state, state.timeout_ms}
@@ -162,7 +171,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     reply =
       DxCore.Agents.WsClient.push_and_wait(state.client, "submit_graph", %{
         "run_id" => state.run_id,
-        "tasks" => tasks
+        "tasks" => tasks,
+        "shard_config" => state.shard_config || %{}
       })
 
     case reply do
@@ -225,14 +235,16 @@ defmodule DxCore.Agents.CLI.Dispatcher do
           session_id: :string,
           token: :string,
           timeout: :integer,
-          build_system: :string
+          build_system: :string,
+          work_dir: :string
         ],
         aliases: [
           c: :coordinator,
           s: :session_id,
           t: :token,
           T: :timeout,
-          b: :build_system
+          b: :build_system,
+          w: :work_dir
         ]
       )
 
