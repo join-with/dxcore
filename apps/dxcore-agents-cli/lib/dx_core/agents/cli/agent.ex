@@ -1,6 +1,23 @@
 defmodule DxCore.Agents.CLI.Agent do
-  @moduledoc "Connects to coordinator, receives task assignments, executes build tasks via adapter."
+  @moduledoc false
 
+  @shortdoc "Connect to coordinator and execute assigned tasks"
+  @help """
+  Connect to coordinator and execute assigned tasks.
+
+  Usage: dxcore agent [options]
+
+  Options:
+    --coordinator, -c <url>       Coordinator URL (required)
+    --agent-id, -a <id>           Unique agent identifier (required)
+    --session-id, -s <id>         Session ID (required)
+    --token, -t <token>           Auth token (required)
+    --work-dir, -w <path>         Working directory (default: ".")
+    --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
+    --tags <tags>                 Comma-separated tags (e.g., gpu=true,arch=arm64)\
+  """
+
+  use DxCore.Agents.CLI.Command
   use GenServer
 
   defstruct [
@@ -19,6 +36,11 @@ defmodule DxCore.Agents.CLI.Agent do
   @idle_timeout_ms 60_000
 
   # --- Public API ---
+
+  def run([flag | _]) when flag in ["--help", "-h"] do
+    DxCore.Agents.CLI.Help.print_for(__MODULE__)
+    throw(:help)
+  end
 
   def run(args) do
     {opts, _rest} = parse_args(args)

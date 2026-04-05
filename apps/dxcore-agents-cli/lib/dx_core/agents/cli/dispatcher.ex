@@ -1,11 +1,35 @@
 defmodule DxCore.Agents.CLI.Dispatcher do
-  @moduledoc "Reads task graph from stdin, submits to coordinator, waits for completion."
+  @moduledoc false
 
+  @shortdoc "Submit task graph and wait for completion"
+  @help """
+  Submit task graph and wait for completion.
+
+  Usage: <build-system> --dry=json | dxcore dispatch [options]
+
+  Options:
+    --coordinator, -c <url>       Coordinator URL (required)
+    --session-id, -s <id>         Session ID (required)
+    --token, -t <token>           Auth token (required)
+    --timeout, -T <seconds>       Max wait for completion (default: 900)
+    --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
+    --work-dir, -w <path>         Working directory for dxcore.json scanning (default: ".")
+
+  Reads task graph JSON from stdin, parses it using the build system adapter,
+  and submits to the coordinator over WebSocket.\
+  """
+
+  use DxCore.Agents.CLI.Command
   use GenServer
 
   defstruct [:client, :ws_monitor, :session_id, :run_id, :timeout_ms, :tasks, :shard_config]
 
   @default_timeout_s 900
+
+  def run([flag | _]) when flag in ["--help", "-h"] do
+    DxCore.Agents.CLI.Help.print_for(__MODULE__)
+    throw(:help)
+  end
 
   def run(args) do
     opts = parse_args(args)
@@ -62,7 +86,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   def read_stdin(:eof, _build_system) do
     {:error,
-     "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore-agents dispatch ..."}
+     "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore dispatch ..."}
   end
 
   def read_stdin(input, build_system) when is_binary(input) do
@@ -70,7 +94,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
     if input == "" do
       {:error,
-       "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore-agents dispatch ..."}
+       "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore dispatch ..."}
     else
       case DxCore.Agents.BuildSystem.resolve(build_system) do
         {:ok, adapter} -> adapter.parse_graph(input)

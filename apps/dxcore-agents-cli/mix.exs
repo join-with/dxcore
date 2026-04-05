@@ -8,7 +8,7 @@ defmodule DxCore.Agents.CLI.MixProject do
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      escript: [main_module: DxCore.Agents.CLI],
+      escript: [main_module: DxCore.Agents.CLI, name: :dxcore],
       releases: releases(),
       deps: deps()
     ]

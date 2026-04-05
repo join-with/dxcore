@@ -1,13 +1,72 @@
 defmodule DxCore.Agents.CLI.Ci do
-  @moduledoc """
-  CI helper commands that replace inline bash scripting in GitHub Actions workflows.
+  @moduledoc false
+
+  @shortdoc "GitHub Actions helper commands"
+  @help """
+  GitHub Actions helper commands.
+
+  Usage: dxcore ci <subcommand> [options]
 
   Subcommands:
-    - `create-session` -- POST /api/sessions, print session ID to stdout
-    - `finish`   -- POST /finish to coordinator, report result
-    - `shutdown` -- POST /shutdown to coordinator, trigger graceful exit
-    - `wait`     -- poll coordinator health endpoint until reachable
+    create-session    Create a new session, print session ID to stdout
+    wait              Poll coordinator health endpoint until reachable
+    finish            Report session result to coordinator
+    shutdown          Trigger graceful coordinator shutdown
+
+  Run 'dxcore ci <subcommand> --help' for more information.\
   """
+
+  @help_finish """
+  Finish a session and report the result.
+
+  Usage: dxcore ci finish [options]
+
+  Options:
+    --coordinator, -c <url>         Coordinator URL (required)
+    --session-id, -s <id>           Session ID (required)
+    --token, -t <token>             Auth token (required)
+    --dispatcher-result, -d <result> Dispatcher result (default: "success")\
+  """
+
+  @help_wait """
+  Poll coordinator health endpoint until reachable.
+
+  Usage: dxcore ci wait [options]
+
+  Options:
+    --coordinator, -c <url>    Coordinator URL (required)
+    --timeout <seconds>        Max wait time (default: 300)
+    --interval <seconds>       Poll interval (default: 5)\
+  """
+
+  @help_shutdown """
+  Trigger graceful coordinator shutdown.
+
+  Usage: dxcore ci shutdown [options]
+
+  Options:
+    --coordinator, -c <url>    Coordinator URL (required)
+    --token, -t <token>        Auth token (required)\
+  """
+
+  @help_create_session """
+  Create a new session and print the session ID to stdout.
+
+  Usage: dxcore ci create-session [options]
+
+  Options:
+    --coordinator, -c <url>    Coordinator URL (required)
+    --token, -t <token>        Auth token (required)\
+  """
+
+  @subcommand_help %{
+    "finish" => @help_finish,
+    "wait" => @help_wait,
+    "shutdown" => @help_shutdown,
+    "create-session" => @help_create_session
+  }
+
+  use DxCore.Agents.CLI.Command
 
   @default_req_opts [connect_options: [timeout: 5_000], receive_timeout: 10_000, retry: false]
 
@@ -116,6 +175,17 @@ defmodule DxCore.Agents.CLI.Ci do
   # ── Runner functions (side-effectful, called from CLI.main) ──────────
 
   @doc false
+  def run([flag | _]) when flag in ["--help", "-h"] do
+    DxCore.Agents.CLI.Help.print_for(__MODULE__)
+    throw(:help)
+  end
+
+  def run([subcmd, flag | _])
+      when flag in ["--help", "-h"] and is_map_key(@subcommand_help, subcmd) do
+    IO.puts(@subcommand_help[subcmd])
+    throw(:help)
+  end
+
   def run(["finish" | _] = args) do
     opts = parse_finish_args(args)
     coordinator = Keyword.fetch!(opts, :coordinator)
@@ -185,7 +255,8 @@ defmodule DxCore.Agents.CLI.Ci do
   end
 
   def run(_) do
-    IO.puts("Usage: dxcore-agents ci <create-session|finish|shutdown|wait> [options]")
+    IO.puts("Unknown ci subcommand.\n")
+    DxCore.Agents.CLI.Help.print_for(__MODULE__)
     System.halt(1)
   end
 

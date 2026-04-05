@@ -32,37 +32,43 @@ defmodule DxCore.Agents.CLI do
     {:ok, _} = Application.ensure_all_started(:slipstream)
     {:ok, _} = Application.ensure_all_started(:req)
 
-    case args do
-      ["agent" | rest] ->
-        DxCore.Agents.CLI.Agent.run(rest)
+    try do
+      case args do
+        ["--help"] ->
+          help_and_exit()
 
-      ["dispatch" | rest] ->
-        DxCore.Agents.CLI.Dispatcher.run(rest)
+        ["-h"] ->
+          help_and_exit()
 
-      ["ci" | rest] ->
-        DxCore.Agents.CLI.Ci.run(rest)
+        [] ->
+          help_and_exit()
 
-      ["config", "--show" | rest] ->
-        run_config_show(rest)
+        ["agent" | rest] ->
+          DxCore.Agents.CLI.Agent.run(rest)
 
-      _ ->
-        IO.puts("Usage: dxcore-agents <agent|dispatch|ci|config> [options]")
-        System.halt(1)
+        ["dispatch" | rest] ->
+          DxCore.Agents.CLI.Dispatcher.run(rest)
+
+        ["ci" | rest] ->
+          DxCore.Agents.CLI.Ci.run(rest)
+
+        ["config" | rest] ->
+          DxCore.Agents.CLI.Config.run(rest)
+
+        _ ->
+          IO.puts("Unknown command: #{List.first(args)}")
+          IO.puts("Run 'dxcore --help' for usage information.")
+          System.halt(1)
+      end
+    catch
+      # Subcommands throw(:help) instead of calling System.halt(0) directly
+      # so that tests can intercept help exits without halting the BEAM.
+      :throw, :help -> System.halt(0)
     end
   end
 
-  defp run_config_show(args) do
-    {opts, _, _} = OptionParser.parse(args, strict: [work_dir: :string], aliases: [w: :work_dir])
-    work_dir = Keyword.get(opts, :work_dir, ".")
-    config = DxCore.Agents.ShardConfig.scan(work_dir)
-
-    case DxCore.Agents.ShardConfig.format_summary(config) do
-      [] ->
-        IO.puts("No shard configuration found. Add dxcore.json files to package directories.")
-
-      lines ->
-        IO.puts("Shard configuration:")
-        Enum.each(lines, &IO.puts("  #{&1}"))
-    end
+  defp help_and_exit do
+    DxCore.Agents.CLI.Help.print_top_level()
+    throw(:help)
   end
 end
