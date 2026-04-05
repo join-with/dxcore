@@ -124,7 +124,7 @@ defmodule DxCore.Agents.CLI.Ci do
     dispatcher_result = Keyword.get(opts, :dispatcher_result, "success")
 
     IO.puts("Finishing session #{session_id}...")
-    response = post_finish(coordinator, session_id, token)
+    response = post_finish(coordinator, session_id, token, dispatcher_result)
 
     case finish_result(dispatcher_result, response) do
       :ok ->
@@ -206,10 +206,11 @@ defmodule DxCore.Agents.CLI.Ci do
     end
   end
 
-  defp post_finish(coordinator, session_id, token) do
+  defp post_finish(coordinator, session_id, token, dispatcher_result) do
     do_request(:post,
       url: "#{coordinator}/api/sessions/#{session_id}/finish",
-      headers: [{"authorization", "Bearer #{token}"}]
+      headers: [{"authorization", "Bearer #{token}"}],
+      json: %{dispatcher_result: dispatcher_result}
     )
   end
 
