@@ -1,5 +1,20 @@
 # @repo/dxcore-agents-cli
 
+## 0.3.0
+
+### Minor Changes
+
+- 1f6f9d9: Add --help/-h flag support and rename binary from dxcore-agents to dxcore.
+  - Add Help module with top-level and per-subcommand help output
+  - Extract Config subcommand into its own module
+  - Add @help/@shortdoc module attributes with Command behaviour for compile-time enforcement
+  - Rename escript binary from dxcore-agents to dxcore (#1412)
+  - Update all CLI documentation references to use new binary name
+
+### Patch Changes
+
+- 4e425fd: Revamp Claude Code instruction files: replace AGENTS.md with per-app CLAUDE.md, add branch protection hook, add PR workflow and Phoenix conventions skills, rewrite root CLAUDE.md from 740 to 118 lines.
+
 ## 0.2.1
 
 ### Patch Changes

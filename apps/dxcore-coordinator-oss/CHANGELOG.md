@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.2.1
+
+### Patch Changes
+
+- 4e425fd: Revamp Claude Code instruction files: replace AGENTS.md with per-app CLAUDE.md, add branch protection hook, add PR workflow and Phoenix conventions skills, rewrite root CLAUDE.md from 740 to 118 lines.
+
 ## 0.2.0
 
 ### Minor Changes
