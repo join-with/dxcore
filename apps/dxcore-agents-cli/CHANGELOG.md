@@ -1,5 +1,15 @@
 # @repo/dxcore-agents-cli
 
+## 0.3.1
+
+### Patch Changes
+
+- 8b29e1d: Set per-app HEX_HOME to eliminate hex cache.ets race condition, enabling parallel `turbo run deps` execution.
+  - Changed `deps` script to `HEX_HOME=$PWD/.hex mix deps.get` in all Elixir workspaces
+  - Changed `clean-deps` to also remove `.hex` directory
+  - Removed `--concurrency=1` from root `deps` task
+  - Added `.hex` to turbo.json `deps` outputs and `.gitignore`
+
 ## 0.3.0
 
 ### Minor Changes
