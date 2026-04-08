@@ -1,5 +1,16 @@
 # @repo/dxcore-agents-cli
 
+## 0.5.1
+
+### Patch Changes
+
+- d5f3e5f: Add Gradle adapter documentation and update generic JSON docs
+  - Add dedicated Gradle docs section (setup, configuration, example workflow) marked as experimental
+  - Add Gradle to getting-started adapter table and prose
+  - Replace stale Gradle example in generic JSON docs with a Make-based example
+  - Add Gradle to generic adapter comparison list
+  - Fix inaccurate Gradle adapter moduledoc
+
 ## 0.5.0
 
 ### Minor Changes
