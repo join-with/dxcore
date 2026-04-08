@@ -1,5 +1,17 @@
 # @repo/dxcore-core
 
+## 0.4.0
+
+### Minor Changes
+
+- 40af799: Add Gradle build system adapter and graph contraction
+  - Add `cacheable` boolean field to Task struct in dxcore-core (defaults true, backward compatible)
+  - Add `TaskGraph.contract/1` — generic graph contraction that absorbs non-cacheable intermediate tasks, keeping cacheable split points and leaf goals
+  - NullPlugin now applies contraction via `expand_graph/2`
+  - New Gradle adapter implementing BuildSystem behaviour with `parse_graph/1` and `task_command/3`
+  - DxCore Gradle plugin (buildSrc) that introspects `@CacheableTask` annotations and exports contracted DAG
+  - Example Gradle monorepo with 3 Java modules and CI workflow
+
 ## 0.3.0
 
 ### Minor Changes
