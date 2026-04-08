@@ -1,0 +1,389 @@
+{
+    "tasks": [
+        {
+            "taskId": ":app:build",
+            "package": "app",
+            "task": "build",
+            "command": "./gradlew :app:build",
+            "cacheable": false,
+            "dependencies": [
+                ":app:assemble",
+                ":app:check"
+            ]
+        },
+        {
+            "taskId": ":app:check",
+            "package": "app",
+            "task": "check",
+            "command": "./gradlew :app:check",
+            "cacheable": false,
+            "dependencies": [
+                ":app:test"
+            ]
+        },
+        {
+            "taskId": ":app:test",
+            "package": "app",
+            "task": "test",
+            "command": "./gradlew :app:test",
+            "cacheable": true,
+            "dependencies": [
+                ":app:classes",
+                ":app:compileJava",
+                ":app:compileTestJava",
+                ":app:testClasses",
+                ":lib-api:jar",
+                ":lib-core:jar"
+            ]
+        },
+        {
+            "taskId": ":app:compileTestJava",
+            "package": "app",
+            "task": "compileTestJava",
+            "command": "./gradlew :app:compileTestJava",
+            "cacheable": true,
+            "dependencies": [
+                ":app:classes",
+                ":app:compileJava",
+                ":lib-api:compileJava"
+            ]
+        },
+        {
+            "taskId": ":app:classes",
+            "package": "app",
+            "task": "classes",
+            "command": "./gradlew :app:classes",
+            "cacheable": false,
+            "dependencies": [
+                ":app:compileJava",
+                ":app:processResources"
+            ]
+        },
+        {
+            "taskId": ":app:compileJava",
+            "package": "app",
+            "task": "compileJava",
+            "command": "./gradlew :app:compileJava",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-api:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-api:compileJava",
+            "package": "lib-api",
+            "task": "compileJava",
+            "command": "./gradlew :lib-api:compileJava",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-core:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-core:compileJava",
+            "package": "lib-core",
+            "task": "compileJava",
+            "command": "./gradlew :lib-core:compileJava",
+            "cacheable": true,
+            "dependencies": []
+        },
+        {
+            "taskId": ":app:processResources",
+            "package": "app",
+            "task": "processResources",
+            "command": "./gradlew :app:processResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":app:testClasses",
+            "package": "app",
+            "task": "testClasses",
+            "command": "./gradlew :app:testClasses",
+            "cacheable": false,
+            "dependencies": [
+                ":app:compileTestJava",
+                ":app:processTestResources"
+            ]
+        },
+        {
+            "taskId": ":app:processTestResources",
+            "package": "app",
+            "task": "processTestResources",
+            "command": "./gradlew :app:processTestResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":lib-api:jar",
+            "package": "lib-api",
+            "task": "jar",
+            "command": "./gradlew :lib-api:jar",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:classes",
+                ":lib-api:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-api:classes",
+            "package": "lib-api",
+            "task": "classes",
+            "command": "./gradlew :lib-api:classes",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:compileJava",
+                ":lib-api:processResources"
+            ]
+        },
+        {
+            "taskId": ":lib-api:processResources",
+            "package": "lib-api",
+            "task": "processResources",
+            "command": "./gradlew :lib-api:processResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":lib-core:jar",
+            "package": "lib-core",
+            "task": "jar",
+            "command": "./gradlew :lib-core:jar",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:classes",
+                ":lib-core:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-core:classes",
+            "package": "lib-core",
+            "task": "classes",
+            "command": "./gradlew :lib-core:classes",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:compileJava",
+                ":lib-core:processResources"
+            ]
+        },
+        {
+            "taskId": ":lib-core:processResources",
+            "package": "lib-core",
+            "task": "processResources",
+            "command": "./gradlew :lib-core:processResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":app:assemble",
+            "package": "app",
+            "task": "assemble",
+            "command": "./gradlew :app:assemble",
+            "cacheable": false,
+            "dependencies": [
+                ":app:distTar",
+                ":app:distZip",
+                ":app:jar"
+            ]
+        },
+        {
+            "taskId": ":app:jar",
+            "package": "app",
+            "task": "jar",
+            "command": "./gradlew :app:jar",
+            "cacheable": false,
+            "dependencies": [
+                ":app:classes",
+                ":app:compileJava"
+            ]
+        },
+        {
+            "taskId": ":app:distZip",
+            "package": "app",
+            "task": "distZip",
+            "command": "./gradlew :app:distZip",
+            "cacheable": false,
+            "dependencies": [
+                ":app:jar",
+                ":app:startScripts",
+                ":lib-api:jar",
+                ":lib-core:jar"
+            ]
+        },
+        {
+            "taskId": ":app:startScripts",
+            "package": "app",
+            "task": "startScripts",
+            "command": "./gradlew :app:startScripts",
+            "cacheable": false,
+            "dependencies": [
+                ":app:jar",
+                ":lib-api:jar",
+                ":lib-core:jar"
+            ]
+        },
+        {
+            "taskId": ":app:distTar",
+            "package": "app",
+            "task": "distTar",
+            "command": "./gradlew :app:distTar",
+            "cacheable": false,
+            "dependencies": [
+                ":app:jar",
+                ":app:startScripts",
+                ":lib-api:jar",
+                ":lib-core:jar"
+            ]
+        },
+        {
+            "taskId": ":lib-api:build",
+            "package": "lib-api",
+            "task": "build",
+            "command": "./gradlew :lib-api:build",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:assemble",
+                ":lib-api:check"
+            ]
+        },
+        {
+            "taskId": ":lib-api:check",
+            "package": "lib-api",
+            "task": "check",
+            "command": "./gradlew :lib-api:check",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:test"
+            ]
+        },
+        {
+            "taskId": ":lib-api:test",
+            "package": "lib-api",
+            "task": "test",
+            "command": "./gradlew :lib-api:test",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-api:classes",
+                ":lib-api:compileJava",
+                ":lib-api:compileTestJava",
+                ":lib-api:testClasses",
+                ":lib-core:jar"
+            ]
+        },
+        {
+            "taskId": ":lib-api:compileTestJava",
+            "package": "lib-api",
+            "task": "compileTestJava",
+            "command": "./gradlew :lib-api:compileTestJava",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-api:classes",
+                ":lib-api:compileJava",
+                ":lib-core:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-api:testClasses",
+            "package": "lib-api",
+            "task": "testClasses",
+            "command": "./gradlew :lib-api:testClasses",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:compileTestJava",
+                ":lib-api:processTestResources"
+            ]
+        },
+        {
+            "taskId": ":lib-api:processTestResources",
+            "package": "lib-api",
+            "task": "processTestResources",
+            "command": "./gradlew :lib-api:processTestResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":lib-api:assemble",
+            "package": "lib-api",
+            "task": "assemble",
+            "command": "./gradlew :lib-api:assemble",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-api:jar"
+            ]
+        },
+        {
+            "taskId": ":lib-core:build",
+            "package": "lib-core",
+            "task": "build",
+            "command": "./gradlew :lib-core:build",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:assemble",
+                ":lib-core:check"
+            ]
+        },
+        {
+            "taskId": ":lib-core:check",
+            "package": "lib-core",
+            "task": "check",
+            "command": "./gradlew :lib-core:check",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:test"
+            ]
+        },
+        {
+            "taskId": ":lib-core:test",
+            "package": "lib-core",
+            "task": "test",
+            "command": "./gradlew :lib-core:test",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-core:classes",
+                ":lib-core:compileJava",
+                ":lib-core:compileTestJava",
+                ":lib-core:testClasses"
+            ]
+        },
+        {
+            "taskId": ":lib-core:compileTestJava",
+            "package": "lib-core",
+            "task": "compileTestJava",
+            "command": "./gradlew :lib-core:compileTestJava",
+            "cacheable": true,
+            "dependencies": [
+                ":lib-core:classes",
+                ":lib-core:compileJava"
+            ]
+        },
+        {
+            "taskId": ":lib-core:testClasses",
+            "package": "lib-core",
+            "task": "testClasses",
+            "command": "./gradlew :lib-core:testClasses",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:compileTestJava",
+                ":lib-core:processTestResources"
+            ]
+        },
+        {
+            "taskId": ":lib-core:processTestResources",
+            "package": "lib-core",
+            "task": "processTestResources",
+            "command": "./gradlew :lib-core:processTestResources",
+            "cacheable": false,
+            "dependencies": []
+        },
+        {
+            "taskId": ":lib-core:assemble",
+            "package": "lib-core",
+            "task": "assemble",
+            "command": "./gradlew :lib-core:assemble",
+            "cacheable": false,
+            "dependencies": [
+                ":lib-core:jar"
+            ]
+        }
+    ]
+}

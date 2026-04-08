@@ -17,6 +17,7 @@ defmodule DxCore.Core.TaskGraph do
             deps: [String.t()],
             dependents: [String.t()],
             cache_status: :hit | :miss,
+            cacheable: boolean(),
             shard: map() | nil
           }
 
@@ -26,10 +27,11 @@ defmodule DxCore.Core.TaskGraph do
       :package,
       :hash,
       :command,
-      :deps,
-      :dependents,
       :cache_status,
-      :shard
+      :shard,
+      deps: [],
+      dependents: [],
+      cacheable: true
     ]
   end
 
@@ -95,12 +97,16 @@ defmodule DxCore.Core.TaskGraph do
       deps: raw["dependencies"] || [],
       dependents: raw["dependents"] || [],
       cache_status: parse_cache_status(raw),
+      cacheable: parse_cacheable(raw),
       shard: parse_shard(raw["shard"])
     }
   end
 
   defp parse_cache_status(%{"cache" => %{"status" => "HIT"}}), do: :hit
   defp parse_cache_status(_), do: :miss
+
+  defp parse_cacheable(%{"cacheable" => false}), do: false
+  defp parse_cacheable(_), do: true
 
   @doc """
   Returns the initial frontier: tasks that are ready to execute.

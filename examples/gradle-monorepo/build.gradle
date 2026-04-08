@@ -1,0 +1,13 @@
+plugins {
+    id 'base'
+    id 'com.joinwith.dxcore'
+}
+
+subprojects {
+    group = 'com.example'
+    version = '1.0.0'
+
+    repositories {
+        mavenCentral()
+    }
+}

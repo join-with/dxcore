@@ -42,5 +42,6 @@ defmodule DxCore.Agents.BuildSystem do
   def resolve("nx"), do: {:ok, DxCore.Agents.BuildSystem.Nx}
   def resolve("generic"), do: {:ok, DxCore.Agents.BuildSystem.Generic}
   def resolve("docker"), do: {:ok, DxCore.Agents.BuildSystem.Docker}
+  def resolve("gradle"), do: {:ok, DxCore.Agents.BuildSystem.Gradle}
   def resolve(other), do: {:error, "Unknown build system: #{other}"}
 end

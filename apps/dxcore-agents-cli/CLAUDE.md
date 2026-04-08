@@ -2,7 +2,7 @@
 
 ## Purpose
 
-CLI agent that connects to a DxCore coordinator to execute CI/CD tasks. Supports Turbo and Nx monorepo build systems.
+CLI agent that connects to a DxCore coordinator to execute CI/CD tasks. Supports Turbo, Nx, Gradle, Generic, and Docker build systems.
 
 ## Architecture
 
@@ -15,6 +15,9 @@ Key modules in `lib/dx_core/agents/`:
 - **BuildSystem** — Abstraction for monorepo build systems
 - **BuildSystem.Turbo** — Turborepo-specific task graph parsing
 - **BuildSystem.Nx** — Nx-specific task graph parsing
+- **BuildSystem.Gradle** — Gradle-specific task graph parsing
+- **BuildSystem.Generic** — Generic JSON task graph parsing
+- **BuildSystem.Docker** — Docker buildx task graph parsing
 - **WsClient** — WebSocket client for coordinator communication
 
 ## Key Patterns

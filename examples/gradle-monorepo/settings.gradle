@@ -1,0 +1,14 @@
+rootProject.name = 'gradle-monorepo'
+
+include 'lib-core', 'lib-api', 'app'
+
+buildCache {
+    local {
+        enabled = true
+    }
+    remote(HttpBuildCache) {
+        url = System.getenv('GRADLE_CACHE_URL') ?: 'http://localhost:5071/cache/'
+        push = true
+        allowInsecureProtocol = true // Safe: traffic encrypted at Tailscale layer
+    }
+}

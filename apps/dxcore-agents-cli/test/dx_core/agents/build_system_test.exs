@@ -20,6 +20,10 @@ defmodule DxCore.Agents.BuildSystemTest do
       assert {:ok, DxCore.Agents.BuildSystem.Docker} = BuildSystem.resolve("docker")
     end
 
+    test "resolves gradle to Gradle adapter" do
+      assert {:ok, DxCore.Agents.BuildSystem.Gradle} = BuildSystem.resolve("gradle")
+    end
+
     test "returns error for unknown build system" do
       assert {:error, "Unknown build system: bazel"} = BuildSystem.resolve("bazel")
     end

@@ -2,6 +2,7 @@ defmodule DxCore.Core.TaskGraphTest do
   use ExUnit.Case, async: true
 
   alias DxCore.Core.TaskGraph
+  alias DxCore.Core.TaskGraph.Task
 
   @fixtures_path Path.expand("../../fixtures", __DIR__)
 
