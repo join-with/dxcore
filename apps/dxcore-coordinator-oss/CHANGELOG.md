@@ -1,5 +1,16 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.3.0
+
+### Minor Changes
+
+- 355e356: Add configurable CI failure strategy and structured run summary.
+  - Scheduler: `:skipped` status, `failure_strategy` option (fail-fast/continue-all), `summary/1` function, extended `TaskState` with `exit_code`/`duration_ms`/`cache_status`/`completed_by`
+  - Coordinators: ETS-based task log buffering, summary included in `run_complete` events, failure strategy resolution from payload/org settings/app config
+  - SaaS: `organization_settings` table with `failure_strategy`, CI Configuration section in org settings UI
+  - CLI: `--failure-strategy` flag, structured summary formatting and printing
+  - Dispatch action: `failure-strategy` input
+
 ## 0.2.2
 
 ### Patch Changes

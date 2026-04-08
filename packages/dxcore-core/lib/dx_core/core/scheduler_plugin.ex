@@ -22,7 +22,10 @@ defmodule DxCore.Core.SchedulerPlugin do
   @doc "Expand the task graph before scheduling begins (e.g., to add shard tasks)."
   @callback expand_graph(graph :: TaskGraph.t(), context :: map()) :: TaskGraph.t()
 
-  @doc "Called when a task completes. Used to record metrics."
+  @doc """
+  Called when a task completes (success or failure). Used to record metrics.
+  Not called for skipped tasks — they never ran and have no profiling data.
+  """
   @callback on_task_complete(
               task :: TaskState.t(),
               result :: :success | :failed,

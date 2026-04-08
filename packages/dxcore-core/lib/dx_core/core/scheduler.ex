@@ -32,11 +32,15 @@ defmodule DxCore.Core.Scheduler do
             deps: [String.t()],
             dependents: [String.t()],
             shard: map() | nil,
-            status: :pending | :running | :done | :failed,
+            status: :pending | :running | :done | :failed | :skipped,
             assigned_to: String.t() | nil,
+            completed_by: String.t() | nil,
             run_id: String.t() | nil,
             agent_info: AgentInfo.t() | nil,
-            started_at_mono: integer() | nil
+            started_at_mono: integer() | nil,
+            exit_code: integer() | nil,
+            duration_ms: integer() | nil,
+            cache_status: :hit | :miss
           }
 
     defstruct [
@@ -50,9 +54,13 @@ defmodule DxCore.Core.Scheduler do
       :shard,
       :status,
       :assigned_to,
+      :completed_by,
       :run_id,
       :agent_info,
-      :started_at_mono
+      :started_at_mono,
+      :exit_code,
+      :duration_ms,
+      :cache_status
     ]
   end
 
@@ -72,9 +80,15 @@ defmodule DxCore.Core.Scheduler do
     session_id = Keyword.fetch!(opts, :session_id)
     plugin = Keyword.fetch!(opts, :plugin)
     context = Keyword.get(opts, :context, %{})
+    failure_strategy = Keyword.get(opts, :failure_strategy, :continue_all)
     registry = Keyword.get(opts, :registry, @default_registry)
     name = {:via, Registry, {registry, {session_id, run_id}}}
-    GenServer.start_link(__MODULE__, {graph, run_id, session_id, plugin, context}, name: name)
+
+    GenServer.start_link(
+      __MODULE__,
+      {graph, run_id, session_id, plugin, context, failure_strategy},
+      name: name
+    )
   end
 
   @doc "Look up the pid of a scheduler by session_id and run_id, or nil if not found."
@@ -124,10 +138,15 @@ defmodule DxCore.Core.Scheduler do
     GenServer.call(pid, :status)
   end
 
+  @doc "Return a structured summary of the run."
+  def summary(pid) do
+    GenServer.call(pid, :summary)
+  end
+
   # ── Server callbacks ────────────────────────────────────────────────
 
   @impl true
-  def init({%TaskGraph{} = graph, run_id, session_id, plugin, context}) do
+  def init({%TaskGraph{} = graph, run_id, session_id, plugin, context, failure_strategy}) do
     # Let the plugin expand the graph before scheduling
     %TaskGraph{tasks: graph_tasks} = plugin.expand_graph(graph, context)
 
@@ -146,9 +165,13 @@ defmodule DxCore.Core.Scheduler do
            shard: t.shard,
            status: if(t.cache_status == :hit, do: :done, else: :pending),
            assigned_to: nil,
+           completed_by: nil,
            run_id: run_id,
            agent_info: nil,
-           started_at_mono: nil
+           started_at_mono: nil,
+           exit_code: nil,
+           duration_ms: nil,
+           cache_status: t.cache_status
          }}
       end)
 
@@ -161,7 +184,9 @@ defmodule DxCore.Core.Scheduler do
       context: context,
       tasks: tasks,
       agents: %{},
-      frontier: frontier
+      frontier: frontier,
+      failure_strategy: failure_strategy,
+      failed_fast: false
     }
 
     {:ok, state}
@@ -202,13 +227,36 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
+  def handle_call({:report_result, task_id, {result_atom, exit_code}}, from, state)
+      when result_atom in [:success, :failed] do
+    case Map.fetch(state.tasks, task_id) do
+      :error ->
+        {:reply, {:error, :unknown_task}, state}
+
+      {:ok, task_state} ->
+        duration_ms = compute_duration(task_state)
+        updated_task = %{task_state | exit_code: exit_code, duration_ms: duration_ms}
+        state = %{state | tasks: Map.put(state.tasks, task_id, updated_task)}
+        handle_call({:report_result, task_id, result_atom}, from, state)
+    end
+  end
+
+  @impl true
   def handle_call({:report_result, task_id, :success}, _from, state) do
     case Map.fetch(state.tasks, task_id) do
       :error ->
         {:reply, {:error, :unknown_task}, state}
 
       {:ok, task_state} ->
-        updated_task = %{task_state | status: :done, assigned_to: nil}
+        duration_ms = task_state.duration_ms || compute_duration(task_state)
+
+        updated_task = %{
+          task_state
+          | status: :done,
+            assigned_to: nil,
+            completed_by: task_state.assigned_to,
+            duration_ms: duration_ms
+        }
 
         tasks = Map.put(state.tasks, task_id, updated_task)
 
@@ -226,7 +274,7 @@ defmodule DxCore.Core.Scheduler do
         # Notify plugin of task completion (wrapped in try/catch for resilience)
         notify_plugin_task_complete(state, task_state, :success)
 
-        {:reply, {:ok, compute_run_status(tasks)}, new_state}
+        {:reply, {:ok, compute_run_status(tasks, state.failed_fast)}, new_state}
     end
   end
 
@@ -237,12 +285,26 @@ defmodule DxCore.Core.Scheduler do
         {:reply, {:error, :unknown_task}, state}
 
       {:ok, task_state} ->
-        updated_task = %{task_state | status: :failed, assigned_to: nil}
+        duration_ms = task_state.duration_ms || compute_duration(task_state)
+
+        updated_task = %{
+          task_state
+          | status: :failed,
+            assigned_to: nil,
+            completed_by: task_state.assigned_to,
+            duration_ms: duration_ms
+        }
 
         tasks = Map.put(state.tasks, task_id, updated_task)
 
-        # Propagate failure transitively to all dependents
-        tasks = propagate_failure(tasks, task_state.dependents)
+        # Apply failure strategy
+        tasks =
+          case state.failure_strategy do
+            :continue_all -> propagate_skipped(tasks, task_state.dependents)
+            :fail_fast -> skip_all_pending(tasks)
+          end
+
+        failed_fast = state.failed_fast || state.failure_strategy == :fail_fast
 
         # Free the agent
         agents =
@@ -253,12 +315,19 @@ defmodule DxCore.Core.Scheduler do
 
         # Recompute frontier (may be empty after failure propagation)
         frontier = compute_frontier(tasks)
-        new_state = %{state | tasks: tasks, agents: agents, frontier: frontier}
+
+        new_state = %{
+          state
+          | tasks: tasks,
+            agents: agents,
+            frontier: frontier,
+            failed_fast: failed_fast
+        }
 
         # Notify plugin of task completion (wrapped in try/catch for resilience)
         notify_plugin_task_complete(state, task_state, :failed)
 
-        {:reply, {:ok, compute_run_status(tasks)}, new_state}
+        {:reply, {:ok, compute_run_status(tasks, failed_fast)}, new_state}
     end
   end
 
@@ -285,8 +354,13 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
+  def handle_call(:summary, _from, state) do
+    {:reply, build_summary(state), state}
+  end
+
+  @impl true
   def handle_call(:status, _from, state) do
-    run_status = compute_run_status(state.tasks)
+    run_status = compute_run_status(state.tasks, state.failed_fast)
 
     reply = %{
       run_id: state.run_id,
@@ -300,6 +374,11 @@ defmodule DxCore.Core.Scheduler do
   end
 
   # ── Private helpers ─────────────────────────────────────────────────
+
+  defp compute_duration(%{started_at_mono: nil}), do: 0
+
+  defp compute_duration(%{started_at_mono: started}),
+    do: System.monotonic_time(:millisecond) - started
 
   defp notify_plugin_task_complete(state, task_state, result) do
     duration_ms =
@@ -332,37 +411,92 @@ defmodule DxCore.Core.Scheduler do
         Enum.all?(t.deps, fn dep ->
           case tasks[dep] do
             nil -> false
-            dep_task -> dep_task.status == :done
+            dep_task -> dep_task.status in [:done, :skipped]
           end
         end)
     end)
     |> MapSet.new(fn {id, _t} -> id end)
   end
 
-  defp propagate_failure(tasks, dependent_ids) do
+  defp propagate_skipped(tasks, dependent_ids) do
     Enum.reduce(dependent_ids, tasks, fn dep_id, acc ->
       dep_task = acc[dep_id]
 
-      if dep_task && dep_task.status in [:pending, :running] do
-        updated = %{dep_task | status: :failed, assigned_to: nil}
+      if dep_task && dep_task.status == :pending do
+        updated = %{dep_task | status: :skipped}
         acc = Map.put(acc, dep_id, updated)
-        # Recursively propagate to this task's dependents
-        propagate_failure(acc, dep_task.dependents)
+        propagate_skipped(acc, dep_task.dependents)
       else
         acc
       end
     end)
   end
 
-  defp compute_run_status(tasks) do
+  defp skip_all_pending(tasks) do
+    Map.new(tasks, fn {id, task} ->
+      if task.status == :pending do
+        {id, %{task | status: :skipped}}
+      else
+        {id, task}
+      end
+    end)
+  end
+
+  defp build_summary(state) do
+    tasks_list =
+      state.tasks
+      |> Enum.map(fn {_id, t} ->
+        %{
+          task_id: t.task_id,
+          package: t.package,
+          task: t.task,
+          status: t.status,
+          cached: t.cache_status == :hit,
+          agent_id: t.completed_by || t.assigned_to,
+          duration_ms: t.duration_ms,
+          exit_code: t.exit_code
+        }
+      end)
+      |> Enum.sort_by(& &1.task_id)
+
+    done_non_cached = Enum.count(tasks_list, &(&1.status == :done and not &1.cached))
+    cached = Enum.count(tasks_list, & &1.cached)
+    failed = Enum.count(tasks_list, &(&1.status == :failed))
+    skipped = Enum.count(tasks_list, &(&1.status == :skipped))
+
+    failures =
+      state.tasks
+      |> Enum.filter(fn {_id, t} -> t.status == :failed end)
+      |> Enum.map(fn {_id, t} ->
+        %{
+          task_id: t.task_id,
+          agent_id: t.completed_by || t.assigned_to,
+          duration_ms: t.duration_ms,
+          exit_code: t.exit_code
+        }
+      end)
+      |> Enum.sort_by(& &1.task_id)
+
+    %{
+      status: compute_run_status(state.tasks, state.failed_fast),
+      tasks: tasks_list,
+      counts: %{passed: done_non_cached, failed: failed, skipped: skipped, cached: cached},
+      failures: failures
+    }
+  end
+
+  defp compute_run_status(tasks, failed_fast) do
     statuses = tasks |> Map.values() |> Enum.map(& &1.status)
 
     cond do
-      Enum.any?(statuses, &(&1 == :failed)) and
-          Enum.all?(statuses, &(&1 in [:done, :failed])) ->
+      failed_fast and Enum.all?(statuses, &(&1 in [:done, :failed, :skipped])) ->
         :failed
 
-      Enum.all?(statuses, &(&1 == :done)) ->
+      Enum.any?(statuses, &(&1 == :failed)) and
+          Enum.all?(statuses, &(&1 in [:done, :failed, :skipped])) ->
+        :failed
+
+      Enum.all?(statuses, &(&1 in [:done, :skipped])) ->
         :complete
 
       true ->

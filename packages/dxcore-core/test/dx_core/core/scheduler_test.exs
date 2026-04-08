@@ -100,9 +100,9 @@ defmodule DxCore.Core.SchedulerTest do
       {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
 
       status = Scheduler.status(pid)
-      assert status.tasks["admin#build"].status == :failed
-      assert status.tasks["api#build"].status == :failed
-      assert status.tasks["admin#test"].status == :failed
+      assert status.tasks["admin#build"].status == :skipped
+      assert status.tasks["api#build"].status == :skipped
+      assert status.tasks["admin#test"].status == :skipped
     end
   end
 
@@ -292,6 +292,262 @@ defmodule DxCore.Core.SchedulerTest do
       {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
 
       assert_receive {:on_task_complete, "@repo/ui#build", :success, _duration_ms, _agent}
+    end
+  end
+
+  describe "failure_strategy: :continue_all" do
+    setup do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_diamond.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "continue-all-run",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :continue_all
+        )
+
+      %{scheduler: pid}
+    end
+
+    test "marks pending dependents as :skipped, not :failed", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _run_status} = Scheduler.report_result(pid, "pkg#lint", :failed)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["pkg#lint"].status == :failed
+      assert status.tasks["pkg#build"].status == :skipped
+      assert status.tasks["pkg#test"].status == :skipped
+      assert status.tasks["pkg#deploy"].status == :skipped
+    end
+
+    test "continues independent tasks when a branch fails", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["pkg#build"].status == :failed
+      assert status.tasks["pkg#test"].status == :running
+      assert status.tasks["pkg#deploy"].status == :skipped
+    end
+
+    test "run resolves to :failed after all independent tasks complete", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+
+      # Fail build, test still running
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+
+      # Complete test — deploy is skipped (depends on failed build), run is failed
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", :success)
+    end
+
+    test "only skips :pending dependents, not :running ones", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["pkg#test"].status == :running
+    end
+  end
+
+  describe "failure_strategy: :fail_fast" do
+    setup do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_diamond.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "fail-fast-run",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :fail_fast
+        )
+
+      %{scheduler: pid}
+    end
+
+    test "skips all pending tasks on first failure", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", :failed)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["pkg#lint"].status == :failed
+      assert status.tasks["pkg#build"].status == :skipped
+      assert status.tasks["pkg#test"].status == :skipped
+      assert status.tasks["pkg#deploy"].status == :skipped
+    end
+
+    test "waits for running tasks to complete before declaring failed", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["pkg#test"].status == :running
+      assert status.tasks["pkg#deploy"].status == :skipped
+
+      assert :no_task = Scheduler.request_task(pid, "agent-1")
+
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", :success)
+    end
+
+    test "does not assign new tasks after fail_fast triggered", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", :failed)
+
+      assert :no_task = Scheduler.request_task(pid, "agent-1")
+    end
+  end
+
+  describe "report_result with exit_code" do
+    test "stores exit_code on TaskState when tuple result provided", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", {:success, 0})
+
+      status = Scheduler.status(pid)
+      assert status.tasks["@repo/ui#build"].exit_code == 0
+    end
+
+    test "stores exit_code on failed result", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", {:failed, 1})
+
+      status = Scheduler.status(pid)
+      assert status.tasks["@repo/ui#build"].exit_code == 1
+    end
+
+    test "bare :success/:failed atoms still work (backward compat)", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["@repo/ui#build"].exit_code == nil
+    end
+  end
+
+  describe "duration_ms and cache_status on TaskState" do
+    test "duration_ms is computed and stored on report_result", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      Process.sleep(5)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["@repo/ui#build"].duration_ms >= 5
+    end
+
+    test "cache_status is preserved from graph" do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_with_cache_hits.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "cache-status-run",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin
+        )
+
+      status = Scheduler.status(pid)
+      assert Enum.any?(status.tasks, fn {_id, t} -> t.cache_status == :hit end)
+      assert Enum.any?(status.tasks, fn {_id, t} -> t.cache_status == :miss end)
+    end
+  end
+
+  describe "completed_by" do
+    test "preserves agent_id after task completion", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+
+      status = Scheduler.status(pid)
+      assert status.tasks["@repo/ui#build"].assigned_to == nil
+      assert status.tasks["@repo/ui#build"].completed_by == "agent-1"
+    end
+  end
+
+  describe "summary/1" do
+    test "returns structured summary after successful run", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", {:success, 0})
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+      {:ok, :running} = Scheduler.report_result(pid, "admin#build", {:success, 0})
+      {:ok, :running} = Scheduler.report_result(pid, "api#build", {:success, 0})
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", {:success, 0})
+
+      summary = Scheduler.summary(pid)
+      assert summary.status == :complete
+      assert summary.counts.passed == 4
+      assert summary.counts.failed == 0
+      assert summary.counts.skipped == 0
+      assert summary.counts.cached == 0
+      assert summary.failures == []
+      assert length(summary.tasks) == 4
+    end
+
+    test "includes failed and skipped tasks in summary" do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_diamond.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "summary-fail-run",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :continue_all
+        )
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", {:failed, 1})
+
+      summary = Scheduler.summary(pid)
+      assert summary.status == :failed
+      assert summary.counts.passed == 0
+      assert summary.counts.failed == 1
+      assert summary.counts.skipped == 3
+      assert length(summary.failures) == 1
+      assert hd(summary.failures).task_id == "pkg#lint"
+      assert hd(summary.failures).exit_code == 1
+    end
+
+    test "cached tasks counted separately" do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_with_cache_hits.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "summary-cache-run",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin
+        )
+
+      summary = Scheduler.summary(pid)
+      assert summary.counts.cached > 0
     end
   end
 end

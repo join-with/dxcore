@@ -8,4 +8,5 @@ defmodule DxCore.Agents.Scheduler do
   defdelegate report_result(pid, task_id, result), to: DxCore.Core.Scheduler
   defdelegate reassign_task(pid, agent_id), to: DxCore.Core.Scheduler
   defdelegate status(pid), to: DxCore.Core.Scheduler
+  defdelegate summary(pid), to: DxCore.Core.Scheduler
 end

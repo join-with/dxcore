@@ -53,14 +53,14 @@ defmodule DxCore.Agents.SchedulerTest do
       assert task2.task_id != task3.task_id
     end
 
-    test "failing a task propagates failure to dependents", %{scheduler: pid} do
+    test "failing a task skips dependents (continue_all strategy)", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
       {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
 
       status = Scheduler.status(pid)
-      assert status.tasks["admin#build"].status == :failed
-      assert status.tasks["api#build"].status == :failed
-      assert status.tasks["admin#test"].status == :failed
+      assert status.tasks["admin#build"].status == :skipped
+      assert status.tasks["api#build"].status == :skipped
+      assert status.tasks["admin#test"].status == :skipped
     end
   end
 

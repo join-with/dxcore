@@ -1,0 +1,51 @@
+{
+  "id": "diamond-run",
+  "monorepo": true,
+  "packages": ["pkg"],
+  "tasks": [
+    {
+      "taskId": "pkg#lint",
+      "task": "lint",
+      "package": "pkg",
+      "hash": "aaa",
+      "command": "mix lint",
+      "outputs": [],
+      "dependencies": [],
+      "dependents": ["pkg#build", "pkg#test"],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "pkg#build",
+      "task": "build",
+      "package": "pkg",
+      "hash": "bbb",
+      "command": "mix compile",
+      "outputs": [],
+      "dependencies": ["pkg#lint"],
+      "dependents": ["pkg#deploy"],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "pkg#test",
+      "task": "test",
+      "package": "pkg",
+      "hash": "ccc",
+      "command": "mix test",
+      "outputs": [],
+      "dependencies": ["pkg#lint"],
+      "dependents": ["pkg#deploy"],
+      "cache": { "status": "MISS" }
+    },
+    {
+      "taskId": "pkg#deploy",
+      "task": "deploy",
+      "package": "pkg",
+      "hash": "ddd",
+      "command": "mix deploy",
+      "outputs": [],
+      "dependencies": ["pkg#build", "pkg#test"],
+      "dependents": [],
+      "cache": { "status": "MISS" }
+    }
+  ]
+}

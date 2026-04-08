@@ -55,7 +55,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
   @impl true
   def handle_in("task_result", payload, socket) do
     %{"task_id" => task_id, "exit_code" => exit_code} = payload
-    result = if exit_code == 0, do: :success, else: :failed
+    result = if exit_code == 0, do: {:success, exit_code}, else: {:failed, exit_code}
     scheduler = socket.assigns[:current_scheduler]
     run_id = socket.assigns[:current_run_id]
     session_id = socket.assigns.session_id
@@ -78,9 +78,27 @@ defmodule DxCore.Agents.Web.AgentChannel do
     if run_status in [:complete, :failed] do
       run_id = run_id || DxCore.Core.ChannelHelpers.get_run_id(scheduler)
 
+      scheduler_summary = Scheduler.summary(scheduler)
+
+      failures_with_output =
+        Enum.map(scheduler_summary.failures, fn failure ->
+          output =
+            DxCore.Core.TaskLogBuffer.get_output(
+              :dxcore_oss_task_log_buffer,
+              session_id,
+              failure.task_id
+            )
+
+          Map.put(failure, :output, output)
+        end)
+
+      summary = %{scheduler_summary | failures: failures_with_output}
+      DxCore.Core.TaskLogBuffer.cleanup(:dxcore_oss_task_log_buffer, session_id)
+
       @endpoint.broadcast!("dispatcher:#{session_id}", "run_complete", %{
         "run_id" => run_id,
-        "status" => to_string(run_status)
+        "status" => to_string(run_status),
+        "summary" => DxCore.Core.RunSummary.serialize(summary)
       })
 
       Sessions.mark_run_complete(session_id, run_id)
@@ -103,6 +121,8 @@ defmodule DxCore.Agents.Web.AgentChannel do
       "task_id" => task_id,
       "line" => line
     })
+
+    DxCore.Core.TaskLogBuffer.buffer(:dxcore_oss_task_log_buffer, session_id, task_id, line)
 
     {:noreply, socket}
   end

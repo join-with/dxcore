@@ -168,7 +168,7 @@ defmodule DxCore.Agents.Web.AgentChannelTest do
           assert_receive %Phoenix.Socket.Broadcast{
             topic: "dispatcher:" <> _,
             event: "run_complete",
-            payload: %{"run_id" => "test-run", "status" => _status}
+            payload: %{"run_id" => "test-run", "status" => _status, "summary" => %{}}
           }
 
         :run_complete ->
@@ -177,6 +177,48 @@ defmodule DxCore.Agents.Web.AgentChannelTest do
 
       # Should NOT receive shutdown (agents stay idle until explicit shutdown)
       refute_push "shutdown", _
+    end
+  end
+
+  describe "run_complete summary" do
+    test "summary includes task statuses and counts on failure", %{
+      socket: socket,
+      session_id: session_id
+    } do
+      DxCore.Agents.Web.Endpoint.subscribe("dispatcher:#{session_id}")
+
+      push(socket, "agent_ready", %{"agent_id" => "agent-1"})
+      assert_push "assign_task", %{"task_id" => "@repo/ui#build"}
+
+      # Send log lines before failing
+      push(socket, "task_log", %{
+        "task_id" => "@repo/ui#build",
+        "line" => "Error: compilation failed"
+      })
+
+      push(socket, "task_result", %{
+        "task_id" => "@repo/ui#build",
+        "exit_code" => 1,
+        "duration_ms" => 500
+      })
+
+      assert_receive %Phoenix.Socket.Broadcast{
+        topic: "dispatcher:" <> _,
+        event: "run_complete",
+        payload: %{
+          "status" => "failed",
+          "summary" => summary
+        }
+      }
+
+      assert summary["status"] == "failed"
+      assert summary["counts"]["failed"] >= 1
+      assert is_list(summary["tasks"])
+      assert is_list(summary["failures"])
+
+      failure = Enum.find(summary["failures"], &(&1["task_id"] == "@repo/ui#build"))
+      assert failure["exit_code"] == 1
+      assert failure["output"] =~ "compilation failed"
     end
   end
 

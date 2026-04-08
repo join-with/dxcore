@@ -67,6 +67,114 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     end
   end
 
+  describe "parse_args --failure-strategy" do
+    test "parses --failure-strategy flag" do
+      args = [
+        "--coordinator",
+        "http://localhost:4000",
+        "--session-id",
+        "s1",
+        "--token",
+        "t1",
+        "--failure-strategy",
+        "fail-fast"
+      ]
+
+      opts = Dispatcher.parse_args(args)
+      assert opts[:failure_strategy] == "fail-fast"
+    end
+
+    test "defaults to nil when not provided" do
+      args = ["--coordinator", "http://localhost:4000", "--session-id", "s1", "--token", "t1"]
+      opts = Dispatcher.parse_args(args)
+      assert opts[:failure_strategy] == nil
+    end
+  end
+
+  describe "format_summary/1" do
+    test "formats successful run summary" do
+      summary = %{
+        "status" => "complete",
+        "tasks" => [
+          %{
+            "task_id" => "pkg#lint",
+            "package" => "pkg",
+            "task" => "lint",
+            "status" => "done",
+            "cached" => false,
+            "agent_id" => "agent-1",
+            "duration_ms" => 1200,
+            "exit_code" => 0
+          },
+          %{
+            "task_id" => "pkg#build",
+            "package" => "pkg",
+            "task" => "build",
+            "status" => "done",
+            "cached" => true,
+            "agent_id" => nil,
+            "duration_ms" => nil,
+            "exit_code" => nil
+          }
+        ],
+        "counts" => %{"passed" => 1, "failed" => 0, "skipped" => 0, "cached" => 1},
+        "failures" => []
+      }
+
+      output = Dispatcher.format_summary(summary)
+      assert output =~ "Run Summary"
+      assert output =~ "pkg#lint"
+      assert output =~ "agent-1"
+      assert output =~ "OK"
+      assert output =~ "CACHED"
+      assert output =~ "1 passed, 0 failed, 0 skipped, 1 cached"
+    end
+
+    test "formats failed run with failure details" do
+      summary = %{
+        "status" => "failed",
+        "tasks" => [
+          %{
+            "task_id" => "pkg#lint",
+            "package" => "pkg",
+            "task" => "lint",
+            "status" => "failed",
+            "cached" => false,
+            "agent_id" => "agent-1",
+            "duration_ms" => 500,
+            "exit_code" => 1
+          },
+          %{
+            "task_id" => "pkg#build",
+            "package" => "pkg",
+            "task" => "build",
+            "status" => "skipped",
+            "cached" => false,
+            "agent_id" => nil,
+            "duration_ms" => nil,
+            "exit_code" => nil
+          }
+        ],
+        "counts" => %{"passed" => 0, "failed" => 1, "skipped" => 1, "cached" => 0},
+        "failures" => [
+          %{
+            "task_id" => "pkg#lint",
+            "agent_id" => "agent-1",
+            "duration_ms" => 500,
+            "exit_code" => 1,
+            "output" => "Error: lint failed\nline 42: unused variable"
+          }
+        ]
+      }
+
+      output = Dispatcher.format_summary(summary)
+      assert output =~ "FAIL(1)"
+      assert output =~ "SKIPPED"
+      assert output =~ "Failure Details"
+      assert output =~ "lint failed"
+    end
+  end
+
   describe "read_stdin/2" do
     test "parses turbo JSON from stdin content" do
       json =

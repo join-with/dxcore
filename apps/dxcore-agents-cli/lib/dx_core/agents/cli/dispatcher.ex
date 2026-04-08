@@ -22,7 +22,16 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   use DxCore.Agents.CLI.Command
   use GenServer
 
-  defstruct [:client, :ws_monitor, :session_id, :run_id, :timeout_ms, :tasks, :shard_config]
+  defstruct [
+    :client,
+    :ws_monitor,
+    :session_id,
+    :run_id,
+    :timeout_ms,
+    :tasks,
+    :shard_config,
+    :failure_strategy
+  ]
 
   @default_timeout_s 900
 
@@ -38,6 +47,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     token = Keyword.fetch!(opts, :token)
     timeout_ms = Keyword.get(opts, :timeout, @default_timeout_s) * 1000
     build_system = Keyword.get(opts, :build_system, "turbo")
+    failure_strategy = opts[:failure_strategy]
 
     work_dir = Keyword.get(opts, :work_dir, ".")
     shard_config = DxCore.Agents.ShardConfig.scan(work_dir)
@@ -63,7 +73,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
             token: token,
             tasks: tasks,
             timeout_ms: timeout_ms,
-            shard_config: shard_config
+            shard_config: shard_config,
+            failure_strategy: failure_strategy
           })
 
         case await_exit(pid) do
@@ -132,7 +143,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
         run_id: run_id,
         timeout_ms: config.timeout_ms,
         tasks: config.tasks,
-        shard_config: config[:shard_config] || %{}
+        shard_config: config[:shard_config] || %{},
+        failure_strategy: config[:failure_strategy]
       })
 
     {:ok, state, state.timeout_ms}
@@ -157,6 +169,11 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   def handle_info({:channel_message, _topic, "run_complete", payload}, state) do
     IO.puts("[coordinator] Run #{payload["run_id"]} complete: #{payload["status"]}")
+
+    case payload["summary"] do
+      nil -> :ok
+      summary -> IO.puts(format_summary(summary))
+    end
 
     if payload["status"] == "failed" do
       {:stop, {:shutdown, :failed}, state}
@@ -192,12 +209,20 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def handle_info({:joined, _topic}, %{tasks: tasks} = state) when tasks != nil do
     IO.puts("[dispatcher:#{state.session_id}] Connected, submitting task graph...")
 
+    payload = %{
+      "run_id" => state.run_id,
+      "tasks" => tasks,
+      "shard_config" => state.shard_config || %{}
+    }
+
+    payload =
+      case state.failure_strategy do
+        nil -> payload
+        strategy -> Map.put(payload, "failure_strategy", strategy)
+      end
+
     reply =
-      DxCore.Agents.WsClient.push_and_wait(state.client, "submit_graph", %{
-        "run_id" => state.run_id,
-        "tasks" => tasks,
-        "shard_config" => state.shard_config || %{}
-      })
+      DxCore.Agents.WsClient.push_and_wait(state.client, "submit_graph", payload)
 
     case reply do
       {:ok, info} ->
@@ -250,6 +275,63 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     {:noreply, state, state.timeout_ms}
   end
 
+  @doc "Format a run summary map into a printable string."
+  def format_summary(summary) do
+    tasks_table = format_tasks_table(summary["tasks"])
+    counts = summary["counts"]
+
+    counts_line =
+      "#{counts["passed"]} passed, #{counts["failed"]} failed, #{counts["skipped"]} skipped, #{counts["cached"]} cached"
+
+    failure_details =
+      case summary["failures"] do
+        [] ->
+          ""
+
+        failures ->
+          "\n\n── Failure Details ──────────────────────────\n" <> format_failures(failures)
+      end
+
+    """
+    ── Run Summary ──────────────────────────────
+    #{tasks_table}
+     #{counts_line}#{failure_details}
+    """
+  end
+
+  defp format_tasks_table(tasks) do
+    tasks
+    |> Enum.map(fn t ->
+      status = format_task_status(t)
+      agent = t["agent_id"] || "—"
+      duration = format_duration(t["duration_ms"])
+
+      " #{String.pad_trailing(t["task_id"], 30)} #{String.pad_trailing(agent, 10)} #{String.pad_trailing(status, 9)} #{duration}"
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp format_task_status(%{"cached" => true}), do: "CACHED"
+  defp format_task_status(%{"status" => "done"}), do: "OK"
+  defp format_task_status(%{"status" => "failed", "exit_code" => code}), do: "FAIL(#{code})"
+  defp format_task_status(%{"status" => "skipped"}), do: "SKIPPED"
+  defp format_task_status(%{"status" => status}), do: String.upcase(status)
+
+  defp format_duration(nil), do: "—"
+  defp format_duration(ms) when ms < 1000, do: "#{ms}ms"
+  defp format_duration(ms), do: "#{Float.round(ms / 1000, 1)}s"
+
+  defp format_failures(failures) do
+    failures
+    |> Enum.map(fn f ->
+      header = " #{f["task_id"]} (#{f["agent_id"]}, #{format_duration(f["duration_ms"])})"
+      output = f["output"] || ""
+      output_lines = output |> String.split("\n") |> Enum.map(&" > #{&1}") |> Enum.join("\n")
+      "#{header}\n#{output_lines}"
+    end)
+    |> Enum.join("\n\n")
+  end
+
   @doc false
   def parse_args(args) do
     {opts, _rest, _invalid} =
@@ -260,7 +342,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
           token: :string,
           timeout: :integer,
           build_system: :string,
-          work_dir: :string
+          work_dir: :string,
+          failure_strategy: :string
         ],
         aliases: [
           c: :coordinator,
@@ -268,7 +351,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
           t: :token,
           T: :timeout,
           b: :build_system,
-          w: :work_dir
+          w: :work_dir,
+          f: :failure_strategy
         ]
       )
 

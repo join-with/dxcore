@@ -17,6 +17,8 @@ defmodule DxCore.Agents.Application do
       {Phoenix.PubSub, name: DxCore.Agents.PubSub},
       DxCore.Agents.Web.Presence,
       {Registry, keys: :unique, name: DxCore.Core.SchedulerRegistry},
+      {DxCore.Core.TaskLogBuffer,
+       table_name: :dxcore_oss_task_log_buffer, name: DxCore.Agents.TaskLogBuffer},
       {DynamicSupervisor, name: DxCore.Core.SchedulerSupervisor, strategy: :one_for_one},
       DxCore.Agents.Sessions.Server,
       # Start to serve requests, typically the last entry
