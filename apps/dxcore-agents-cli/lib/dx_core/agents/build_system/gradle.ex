@@ -3,8 +3,8 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
   Gradle build system adapter.
 
   Parses the JSON output of the DxCore Gradle plugin (`exportDxcoreGraph` task),
-  which emits only `@CacheableTask`-annotated tasks with resolved cacheable-to-cacheable
-  dependency edges.
+  which emits all tasks reachable from each subproject's `build` goal with a
+  `cacheable` boolean flag based on `@CacheableTask` annotation detection.
 
   The `hash` field defaults to `""` and `cache` is always `MISS` since Gradle's
   build cache is managed externally (not by DxCore).
