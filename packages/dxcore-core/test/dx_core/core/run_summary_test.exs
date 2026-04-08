@@ -3,6 +3,16 @@ defmodule DxCore.Core.RunSummaryTest do
 
   alias DxCore.Core.RunSummary
 
+  describe "empty/0" do
+    test "returns a complete summary with zeroed counts" do
+      summary = RunSummary.empty()
+      assert summary.status == :complete
+      assert summary.tasks == []
+      assert summary.counts == %{passed: 0, failed: 0, skipped: 0, cached: 0}
+      assert summary.failures == []
+    end
+  end
+
   describe "serialize/1" do
     test "serializes all task status atoms to strings" do
       summary = %{

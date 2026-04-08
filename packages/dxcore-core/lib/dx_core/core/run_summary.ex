@@ -1,6 +1,16 @@
 defmodule DxCore.Core.RunSummary do
   @moduledoc "Serializes scheduler summary maps for JSON transport over channels."
 
+  @doc "Return an empty summary for runs with no tasks."
+  def empty do
+    %{
+      status: :complete,
+      tasks: [],
+      counts: %{passed: 0, failed: 0, skipped: 0, cached: 0},
+      failures: []
+    }
+  end
+
   @doc "Convert a scheduler summary (atom-keyed map) to string-keyed map for JSON."
   def serialize(summary) do
     %{

@@ -90,8 +90,25 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
     total_tasks = map_size(graph.tasks)
     cached_tasks = Enum.count(graph.tasks, fn {_, t} -> t.cache_status == :hit end)
 
-    # Notify agents in this session to check for tasks
-    DxCore.Agents.Web.Endpoint.broadcast!("agent:#{session_id}", "tasks_available", %{})
+    if total_tasks == 0 do
+      # Empty graph — run is already complete, broadcast immediately
+      summary =
+        case DxCore.Core.Scheduler.whereis(session_id, run_id) do
+          nil -> DxCore.Core.RunSummary.empty()
+          scheduler -> DxCore.Core.Scheduler.summary(scheduler)
+        end
+
+      @endpoint.broadcast!("dispatcher:#{session_id}", "run_complete", %{
+        "run_id" => run_id,
+        "status" => "complete",
+        "summary" => DxCore.Core.RunSummary.serialize(summary)
+      })
+
+      Sessions.mark_run_complete(session_id, run_id)
+    else
+      # Notify agents in this session to check for tasks
+      DxCore.Agents.Web.Endpoint.broadcast!("agent:#{session_id}", "tasks_available", %{})
+    end
 
     {:reply,
      {:ok,
