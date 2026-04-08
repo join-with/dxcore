@@ -1,5 +1,13 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.3.1
+
+### Patch Changes
+
+- 78e4350: Fix dispatcher timeout when task graph is empty (0 tasks)
+  - Broadcast run_complete immediately when submit_graph receives an empty graph
+  - Prevents 600s timeout in CI when turbo --affected finds no work
+
 ## 0.3.0
 
 ### Minor Changes
