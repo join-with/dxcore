@@ -1,5 +1,14 @@
 # @repo/dxcore-agents-cli
 
+## 0.5.2
+
+### Patch Changes
+
+- 200da69: Fix generic and Docker adapter agent-side crash by sending command in assign_task payload
+  - Include command field in assign_task WebSocket message from coordinator
+  - Agent uses command directly when present, falls back to adapter.task_command
+  - Fix Make parser script: filter deps to task IDs only, use directory as package
+
 ## 0.5.1
 
 ### Patch Changes
