@@ -42,6 +42,7 @@ defmodule DxCore.Agents.BuildSystem.Nx do
       "package" => package,
       "hash" => task["hash"] || "",
       "command" => "npx nx run #{package}:#{target}",
+      "cacheable" => Map.get(task, "cache", false),
       "dependencies" => Map.get(deps_map, id, []),
       "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}

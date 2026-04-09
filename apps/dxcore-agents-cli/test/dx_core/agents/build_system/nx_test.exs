@@ -50,6 +50,32 @@ defmodule DxCore.Agents.BuildSystem.NxTest do
       assert by_id["myapp:test"]["command"] == "npx nx run myapp:test"
     end
 
+    test "reads cacheable from task cache field", %{json: json} do
+      {:ok, tasks} = Nx.parse_graph(json)
+
+      Enum.each(tasks, fn task ->
+        assert task["cacheable"] == true
+      end)
+    end
+
+    test "defaults cacheable to false when cache field is absent" do
+      json =
+        Jason.encode!(%{
+          "tasks" => %{
+            "tasks" => %{
+              "mylib:build" => %{
+                "id" => "mylib:build",
+                "target" => %{"project" => "mylib", "target" => "build"}
+              }
+            },
+            "dependencies" => %{"mylib:build" => []}
+          }
+        })
+
+      assert {:ok, [task]} = Nx.parse_graph(json)
+      assert task["cacheable"] == false
+    end
+
     test "handles empty graph" do
       json = ~s({"tasks":{"tasks":{},"dependencies":{}}})
       assert {:ok, []} = Nx.parse_graph(json)
