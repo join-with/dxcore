@@ -1,5 +1,13 @@
 # @repo/dxcore-agents-cli
 
+## 0.5.3
+
+### Patch Changes
+
+- 4da0b84: Nx adapter reads cacheable from task cache field, fix docs to use correct graph command
+  - Read `cache` boolean from Nx task graph JSON and set `cacheable` accordingly
+  - Fix all Nx docs to use `nx run-many --graph=stdout` (not `nx graph --file=stdout`)
+
 ## 0.5.2
 
 ### Patch Changes
