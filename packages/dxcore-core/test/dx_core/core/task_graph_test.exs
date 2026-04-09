@@ -65,6 +65,54 @@ defmodule DxCore.Core.TaskGraphTest do
       end)
     end
 
+    test "cacheable defaults to false when not specified" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{"taskId" => "a", "task" => "build", "package" => "x", "dependencies" => []}
+          ]
+        })
+
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+      assert tasks["a"].cacheable == false
+    end
+
+    test "cacheable is true when explicitly set" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "a",
+              "task" => "build",
+              "package" => "x",
+              "dependencies" => [],
+              "cacheable" => true
+            }
+          ]
+        })
+
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+      assert tasks["a"].cacheable == true
+    end
+
+    test "cacheable is false when explicitly set" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "a",
+              "task" => "build",
+              "package" => "x",
+              "dependencies" => [],
+              "cacheable" => false
+            }
+          ]
+        })
+
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+      assert tasks["a"].cacheable == false
+    end
+
     test "returns error on invalid JSON" do
       assert {:error, _reason} = TaskGraph.parse("not valid json")
     end

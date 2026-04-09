@@ -21,24 +21,19 @@ defmodule DxCore.Agents.BuildSystem.Generic do
       }
 
   The `hash` field defaults to `""` and `cache` is always `MISS`.
-  Commands are stored in ETS keyed by `{package, task}` for lookup by `task_command/3`.
   """
 
   @behaviour DxCore.Agents.BuildSystem
 
   alias DxCore.Agents.BuildSystem.GraphHelpers
 
-  @ets_table :dxcore_generic_commands
   @required_fields ~w(taskId package task command)
 
   @impl true
   def parse_graph(json) do
     case Jason.decode(json) do
       {:ok, %{"tasks" => tasks}} when is_list(tasks) ->
-        with {:ok, normalized} <- normalize_tasks(tasks) do
-          store_commands(normalized)
-          {:ok, normalized}
-        end
+        normalize_tasks(tasks)
 
       {:ok, _} ->
         {:error, "Unexpected Generic graph: missing tasks key"}
@@ -46,19 +41,6 @@ defmodule DxCore.Agents.BuildSystem.Generic do
       {:error, reason} ->
         {:error, "Failed to parse Generic graph JSON: #{Exception.message(reason)}"}
     end
-  end
-
-  @impl true
-  def task_command(_work_dir, package, task) do
-    command =
-      case :ets.lookup(@ets_table, {package, task}) do
-        [{_key, cmd}] -> cmd
-        [] -> raise "No command found for #{package}:#{task} — call parse_graph/1 first"
-      end
-
-    [executable | args] = String.split(command)
-    resolved = System.find_executable(executable) || executable
-    {resolved, args}
   end
 
   defp normalize_tasks(tasks) do
@@ -104,14 +86,5 @@ defmodule DxCore.Agents.BuildSystem.Generic do
       "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}
     }
-  end
-
-  defp store_commands(tasks) do
-    GraphHelpers.ensure_ets_table(@ets_table)
-    :ets.delete_all_objects(@ets_table)
-
-    Enum.each(tasks, fn task ->
-      :ets.insert(@ets_table, {{task["package"], task["task"]}, task["command"]})
-    end)
   end
 end

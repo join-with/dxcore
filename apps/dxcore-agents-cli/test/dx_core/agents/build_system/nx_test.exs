@@ -42,12 +42,12 @@ defmodule DxCore.Agents.BuildSystem.NxTest do
       end)
     end
 
-    test "sets empty command for all tasks", %{json: json} do
+    test "populates command field with npx nx run", %{json: json} do
       {:ok, tasks} = Nx.parse_graph(json)
+      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
 
-      Enum.each(tasks, fn task ->
-        assert task["command"] == ""
-      end)
+      assert by_id["mylib:build"]["command"] == "npx nx run mylib:build"
+      assert by_id["myapp:test"]["command"] == "npx nx run myapp:test"
     end
 
     test "handles empty graph" do
@@ -63,15 +63,6 @@ defmodule DxCore.Agents.BuildSystem.NxTest do
     test "returns error for JSON missing tasks key" do
       assert {:error, "Unexpected Nx graph output: missing tasks field"} =
                Nx.parse_graph(~s({"graph":{}}))
-    end
-  end
-
-  describe "task_command/3" do
-    test "returns npx nx run command" do
-      {executable, args} = Nx.task_command("/work", "myapp", "build")
-
-      assert String.ends_with?(executable, "npx")
-      assert args == ["nx", "run", "myapp:build"]
     end
   end
 end

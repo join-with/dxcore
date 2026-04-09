@@ -31,21 +31,17 @@ defmodule DxCore.Agents.BuildSystem.Nx do
     end
   end
 
-  @impl true
-  def task_command(_work_dir, package, task) do
-    npx = System.find_executable("npx") || raise "npx not found in PATH"
-    {npx, ["nx", "run", "#{package}:#{task}"]}
-  end
-
   defp normalize_task(task, deps_map, dependents_map) do
     id = task["id"]
+    package = get_in(task, ["target", "project"])
+    target = get_in(task, ["target", "target"])
 
     %{
       "taskId" => id,
-      "task" => get_in(task, ["target", "target"]),
-      "package" => get_in(task, ["target", "project"]),
+      "task" => target,
+      "package" => package,
       "hash" => task["hash"] || "",
-      "command" => "",
+      "command" => "npx nx run #{package}:#{target}",
       "dependencies" => Map.get(deps_map, id, []),
       "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}

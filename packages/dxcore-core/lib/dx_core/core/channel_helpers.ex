@@ -61,6 +61,7 @@ defmodule DxCore.Core.ChannelHelpers do
               "package" => task.package,
               "task" => task.task,
               "hash" => task.hash,
+              "command" => task.command,
               "shard" => task.shard
             })
 

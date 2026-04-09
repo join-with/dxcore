@@ -13,7 +13,7 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
       assert task["package"] == "ui"
       assert task["task"] == "build"
       assert task["hash"] == "abc"
-      assert task["command"] == "vite build"
+      assert task["command"] == "npx turbo run build --filter=ui"
       assert task["dependencies"] == []
       assert task["dependents"] == ["app#build"]
       assert task["cache"] == %{"status" => "MISS"}
@@ -34,12 +34,41 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
     end
   end
 
-  describe "task_command/3" do
-    test "returns npx turbo command for package and task" do
-      {executable, args} = Turbo.task_command("/work", "admin", "build")
+  test "sets cacheable from resolvedTaskDefinition.cache" do
+    json =
+      Jason.encode!(%{
+        "tasks" => [
+          %{
+            "taskId" => "ui#build",
+            "task" => "build",
+            "package" => "ui",
+            "hash" => "abc",
+            "resolvedTaskDefinition" => %{"cache" => false}
+          },
+          %{
+            "taskId" => "ui#test",
+            "task" => "test",
+            "package" => "ui",
+            "hash" => "def",
+            "resolvedTaskDefinition" => %{"cache" => true}
+          }
+        ]
+      })
 
-      assert String.ends_with?(executable, "npx")
-      assert args == ["turbo", "run", "build", "--filter=admin"]
-    end
+    assert {:ok, [build, test]} = Turbo.parse_graph(json)
+    assert build["cacheable"] == false
+    assert test["cacheable"] == true
+  end
+
+  test "defaults cacheable to true when resolvedTaskDefinition is absent" do
+    json =
+      Jason.encode!(%{
+        "tasks" => [
+          %{"taskId" => "ui#dev", "task" => "dev", "package" => "ui", "hash" => "xyz"}
+        ]
+      })
+
+    assert {:ok, [task]} = Turbo.parse_graph(json)
+    assert task["cacheable"] == true
   end
 end

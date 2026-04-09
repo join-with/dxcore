@@ -31,7 +31,7 @@ defmodule DxCore.Core.TaskGraph do
       :shard,
       deps: [],
       dependents: [],
-      cacheable: true
+      cacheable: false
     ]
   end
 
@@ -105,8 +105,9 @@ defmodule DxCore.Core.TaskGraph do
   defp parse_cache_status(%{"cache" => %{"status" => "HIT"}}), do: :hit
   defp parse_cache_status(_), do: :miss
 
+  defp parse_cacheable(%{"cacheable" => true}), do: true
   defp parse_cacheable(%{"cacheable" => false}), do: false
-  defp parse_cacheable(_), do: true
+  defp parse_cacheable(_), do: false
 
   @doc """
   Returns the initial frontier: tasks that are ready to execute.

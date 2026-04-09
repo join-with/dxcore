@@ -110,11 +110,11 @@ defmodule DxCore.Agents.BuildSystem.GradleTest do
     end
   end
 
-  describe "task_command/3" do
-    test "returns gradlew with task path from work_dir" do
-      {executable, args} = Gradle.task_command("/my/project", "lib-core", "compileJava")
-      assert executable == "/my/project/gradlew"
-      assert args == [":lib-core:compileJava"]
-    end
+  test "preserves command from plugin JSON" do
+    json = File.read!(Path.join(File.cwd!(), @fixture_path))
+    assert {:ok, tasks} = Gradle.parse_graph(json)
+    by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
+
+    assert by_id[":lib-core:compileJava"]["command"] == "./gradlew :lib-core:compileJava"
   end
 end

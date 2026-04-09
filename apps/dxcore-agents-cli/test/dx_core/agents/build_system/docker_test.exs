@@ -65,66 +65,61 @@ defmodule DxCore.Agents.BuildSystem.DockerTest do
       assert {:error, "Unexpected Docker bake output: missing target key"} =
                Docker.parse_graph(~s({"group":{}}))
     end
-  end
 
-  describe "task_command/3" do
-    setup do
-      json = File.read!(Path.join(File.cwd!(), @fixture_path))
-      Docker.parse_graph(json)
-      :ok
+    test "marks targets without remote cache as not cacheable", %{json: json} do
+      assert {:ok, tasks} = Docker.parse_graph(json)
+
+      Enum.each(tasks, fn task ->
+        assert task["cacheable"] == false
+      end)
     end
 
-    test "returns docker buildx build command with -f, -t tags, --push, and context dir" do
-      {executable, args} = Docker.task_command("/work", "api", "build")
+    test "marks targets with cache-from as cacheable" do
+      json =
+        Jason.encode!(%{
+          "target" => %{
+            "api" => %{
+              "dockerfile" => "Dockerfile",
+              "context" => ".",
+              "tags" => ["img:latest"],
+              "cache-from" => ["type=registry,ref=ghcr.io/org/api:cache"]
+            }
+          }
+        })
 
-      assert String.ends_with?(executable, "docker")
-
-      assert args == [
-               "buildx",
-               "build",
-               "-f",
-               "services/api/Dockerfile",
-               "-t",
-               "myrepo/api:latest",
-               "-t",
-               "myrepo/api:v1.2.3",
-               "--push",
-               "services/api"
-             ]
+      assert {:ok, [task]} = Docker.parse_graph(json)
+      assert task["cacheable"] == true
     end
 
-    test "returns correct command for target with single tag" do
-      {executable, args} = Docker.task_command("/work", "worker", "build")
+    test "marks targets with empty cache-from as not cacheable" do
+      json =
+        Jason.encode!(%{
+          "target" => %{
+            "api" => %{
+              "dockerfile" => "Dockerfile",
+              "context" => ".",
+              "tags" => ["img:latest"],
+              "cache-from" => []
+            }
+          }
+        })
 
-      assert String.ends_with?(executable, "docker")
-
-      assert args == [
-               "buildx",
-               "build",
-               "-f",
-               "services/worker/Dockerfile",
-               "-t",
-               "myrepo/worker:latest",
-               "--push",
-               "services/worker"
-             ]
+      assert {:ok, [task]} = Docker.parse_graph(json)
+      assert task["cacheable"] == false
     end
 
-    test "returns correct command for target with contexts dependency" do
-      {executable, args} = Docker.task_command("/work", "gateway", "build")
+    test "builds command string from target metadata", %{json: json} do
+      assert {:ok, tasks} = Docker.parse_graph(json)
+      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
 
-      assert String.ends_with?(executable, "docker")
+      assert by_id["api"]["command"] ==
+               "docker buildx build -f services/api/Dockerfile -t myrepo/api:latest -t myrepo/api:v1.2.3 --push services/api"
 
-      assert args == [
-               "buildx",
-               "build",
-               "-f",
-               "services/gateway/Dockerfile",
-               "-t",
-               "myrepo/gateway:latest",
-               "--push",
-               "services/gateway"
-             ]
+      assert by_id["worker"]["command"] ==
+               "docker buildx build -f services/worker/Dockerfile -t myrepo/worker:latest --push services/worker"
+
+      assert by_id["gateway"]["command"] ==
+               "docker buildx build -f services/gateway/Dockerfile -t myrepo/gateway:latest --push services/gateway"
     end
   end
 end

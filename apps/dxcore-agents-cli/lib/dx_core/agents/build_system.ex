@@ -2,8 +2,9 @@ defmodule DxCore.Agents.BuildSystem do
   @moduledoc """
   Behaviour for build system adapters.
 
-  Each adapter normalizes a build system's task graph JSON and provides
-  execution commands for the coordinator's expected format.
+  Each adapter normalizes a build system's task graph JSON into the
+  coordinator's expected format. The `command` field must be populated
+  during `parse_graph/1` — the coordinator forwards it to agents for execution.
   """
 
   @doc """
@@ -20,7 +21,7 @@ defmodule DxCore.Agents.BuildSystem do
         "task" => "build",
         "package" => "mylib",
         "hash" => "abc123",           # may be "" if unavailable (e.g. Nx)
-        "command" => "vite build",    # may be "" if unavailable (e.g. Nx)
+        "command" => "npx turbo run build --filter=mylib",
         "dependencies" => ["core#build"],
         "dependents" => ["app#build"],
         "cache" => %{"status" => "MISS"}
@@ -28,14 +29,6 @@ defmodule DxCore.Agents.BuildSystem do
   """
   @callback parse_graph(json :: String.t()) ::
               {:ok, [map()]} | {:error, String.t()}
-
-  @doc """
-  Return the command to execute a single task.
-
-  Returns `{executable, args}` to be used with `Port.open/2`.
-  """
-  @callback task_command(work_dir :: String.t(), package :: String.t(), task :: String.t()) ::
-              {executable :: String.t(), args :: [String.t()]}
 
   @doc "Resolve a build system name to its adapter module."
   def resolve("turbo"), do: {:ok, DxCore.Agents.BuildSystem.Turbo}

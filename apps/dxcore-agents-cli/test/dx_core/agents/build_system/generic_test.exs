@@ -136,25 +136,12 @@ defmodule DxCore.Agents.BuildSystem.GenericTest do
     end
   end
 
-  describe "task_command/3" do
-    setup do
-      json = File.read!(Path.join(File.cwd!(), @fixture_path))
-      Generic.parse_graph(json)
-      :ok
-    end
+  test "preserves command from input JSON" do
+    json = File.read!(Path.join(File.cwd!(), @fixture_path))
+    assert {:ok, tasks} = Generic.parse_graph(json)
+    by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
 
-    test "returns executable and args from stored command" do
-      {executable, args} = Generic.task_command("/work", "db", "migrate")
-
-      assert String.ends_with?(executable, "mix")
-      assert args == ["ecto.migrate"]
-    end
-
-    test "splits multi-arg command into executable and args" do
-      {executable, args} = Generic.task_command("/work", "api", "test")
-
-      assert String.ends_with?(executable, "cargo")
-      assert args == ["test", "--release"]
-    end
+    assert by_id["migrate"]["command"] == "mix ecto.migrate"
+    assert by_id["test-api"]["command"] == "cargo test --release"
   end
 end

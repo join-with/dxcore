@@ -125,12 +125,12 @@ defmodule DxCore.Agents.CLI.Agent do
       log(state, "Warning: task already in progress, ignoring")
       {:noreply, state, idle_timeout(state)}
     else
-      %{"task_id" => task_id, "package" => package, "task" => task} = payload
+      %{"task_id" => task_id, "command" => command} = payload
       shard = payload["shard"]
       log(state, "Executing task #{task_id}")
 
       try do
-        port = open_task_port(state.adapter, state.work_dir, package, task, shard)
+        port = open_task_port(state.work_dir, command, shard)
 
         new_state = %{
           state
@@ -284,8 +284,9 @@ defmodule DxCore.Agents.CLI.Agent do
     :ok
   end
 
-  defp open_task_port(adapter, work_dir, package, task, shard) do
-    {executable, args} = adapter.task_command(work_dir, package, task)
+  defp open_task_port(work_dir, command, shard) do
+    [exe | args] = String.split(command)
+    executable = System.find_executable(exe) || exe
 
     env =
       case shard do

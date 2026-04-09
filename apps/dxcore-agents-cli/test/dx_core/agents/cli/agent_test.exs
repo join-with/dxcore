@@ -316,7 +316,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "build"}}
+         %{"task_id" => "t1", "package" => "web", "task" => "build", "command" => "echo hello"}}
 
       assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
       on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
@@ -406,42 +406,24 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t2", "package" => "pkg", "task" => "build"}}
+         %{"task_id" => "t2", "package" => "pkg", "task" => "build", "command" => "echo hi"}}
 
       assert {:noreply, ^state, :infinity} = Agent.handle_info(msg, state)
     end
   end
 
-  describe "adapter pluggability" do
-    defmodule FakeAdapter do
-      @behaviour DxCore.Agents.BuildSystem
-
-      @impl true
-      def parse_graph(_json), do: {:ok, []}
-
-      @impl true
-      def task_command(_work_dir, _package, _task) do
-        echo = System.find_executable("echo")
-        {echo, ["fake-adapter-output"]}
-      end
-    end
-
-    defmodule RaisingAdapter do
-      @behaviour DxCore.Agents.BuildSystem
-
-      @impl true
-      def parse_graph(_json), do: {:ok, []}
-
-      @impl true
-      def task_command(_work_dir, _package, _task), do: raise("npx not found in PATH")
-    end
-
-    test "assign_task rescue reports exit_code -1 when adapter raises" do
-      state = base_state(%{adapter: RaisingAdapter})
+  describe "command execution" do
+    test "assign_task rescue reports exit_code -1 for invalid command" do
+      state = base_state()
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "build"}}
+         %{
+           "task_id" => "t1",
+           "package" => "web",
+           "task" => "build",
+           "command" => "definitely_not_a_real_command_xyz"
+         }}
 
       assert {:noreply, new_state, 60_000} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
@@ -452,38 +434,29 @@ defmodule DxCore.Agents.CLI.AgentTest do
                        %{"task_id" => "t1", "exit_code" => -1, "duration_ms" => 0}}}
     end
 
-    test "assign_task uses the adapter from state, not a hardcoded module" do
-      state = base_state(%{adapter: FakeAdapter})
+    test "assign_task executes command from payload" do
+      state = base_state()
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "build"}}
+         %{
+           "task_id" => "t1",
+           "package" => "web",
+           "task" => "build",
+           "command" => "echo fake-adapter-output"
+         }}
 
       assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
       on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
       assert new_state.current_port != nil
 
-      # The port should emit "fake-adapter-output" from echo
       assert_receive {_port, {:data, {:eol, "fake-adapter-output"}}}, 1000
     end
   end
 
   describe "shard-aware execution" do
-    defmodule EnvPrinterAdapter do
-      @behaviour DxCore.Agents.BuildSystem
-
-      @impl true
-      def parse_graph(_json), do: {:ok, []}
-
-      @impl true
-      def task_command(_work_dir, _package, _task) do
-        sh = System.find_executable("sh")
-        {sh, ["-c", "env | grep DXCORE || true"]}
-      end
-    end
-
     test "assign_task with shard sets DXCORE_SHARD_INDEX and DXCORE_SHARD_COUNT env vars" do
-      state = base_state(%{adapter: EnvPrinterAdapter})
+      state = base_state()
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
@@ -491,6 +464,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
            "task_id" => "t1",
            "package" => "web",
            "task" => "test",
+           "command" => "env",
            "shard" => %{"index" => 1, "count" => 2}
          }}
 
@@ -506,11 +480,11 @@ defmodule DxCore.Agents.CLI.AgentTest do
     end
 
     test "assign_task without shard does not set DXCORE_SHARD env vars" do
-      state = base_state(%{adapter: EnvPrinterAdapter})
+      state = base_state()
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "test"}}
+         %{"task_id" => "t1", "package" => "web", "task" => "test", "command" => "env"}}
 
       assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
       on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)

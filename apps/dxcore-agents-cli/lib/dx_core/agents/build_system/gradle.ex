@@ -30,12 +30,6 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
     end
   end
 
-  @impl true
-  def task_command(work_dir, package, task) do
-    gradlew = Path.join(work_dir, "gradlew")
-    {gradlew, [":#{package}:#{task}"]}
-  end
-
   defp normalize_tasks(tasks) do
     case Enum.find(tasks, &missing_field?/1) do
       nil ->
@@ -65,7 +59,7 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
       "task" => task["task"],
       "package" => task["package"],
       "command" => task["command"],
-      "cacheable" => Map.get(task, "cacheable", true),
+      "cacheable" => Map.get(task, "cacheable", false),
       "hash" => "",
       "dependencies" => Map.get(deps_index, id, []),
       "dependents" => Map.get(dependents_map, id, []),
