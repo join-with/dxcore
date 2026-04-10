@@ -105,6 +105,24 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert Keyword.fetch!(opts, :build_system) == "turbo"
     end
 
+    test "parses --command-template flag" do
+      args = [
+        "-c",
+        "http://localhost:4000",
+        "-a",
+        "a1",
+        "-s",
+        "s1",
+        "-t",
+        "t1",
+        "--command-template",
+        "make -C {package} {task}"
+      ]
+
+      {opts, _rest} = Agent.parse_args(args)
+      assert Keyword.fetch!(opts, :command_template) == "make -C {package} {task}"
+    end
+
     test "parses --tags flag" do
       args = [
         "--coordinator",
@@ -197,7 +215,8 @@ defmodule DxCore.Agents.CLI.AgentTest do
               "memory_mb" => 8192,
               "disk_free_mb" => nil,
               "tags" => %{}
-            }
+            },
+            command_template: nil
           },
           overrides
         )
@@ -510,6 +529,105 @@ defmodule DxCore.Agents.CLI.AgentTest do
         2000 ->
           Enum.reverse(acc)
       end
+    end
+  end
+
+  describe "resolve_command/2" do
+    test "nil template returns payload command" do
+      payload = %{"command" => "echo hello", "package" => "web", "task" => "build"}
+      assert {:ok, "echo hello"} = Agent.resolve_command(nil, payload)
+    end
+
+    test "template interpolates task metadata" do
+      payload = %{
+        "command" => "echo hello",
+        "package" => "web",
+        "task" => "build",
+        "hash" => "abc",
+        "shard" => nil
+      }
+
+      assert {:ok, "make -C web build"} =
+               Agent.resolve_command("make -C {package} {task}", payload)
+    end
+
+    test "template with {command} wraps original command" do
+      payload = %{
+        "command" => "npx turbo run build",
+        "package" => "web",
+        "task" => "build",
+        "hash" => "",
+        "shard" => nil
+      }
+
+      assert {:ok, "timeout 300 npx turbo run build"} =
+               Agent.resolve_command("timeout 300 {command}", payload)
+    end
+
+    test "template error returns {:error, reason}" do
+      payload = %{
+        "command" => "echo hello",
+        "package" => "",
+        "task" => "build",
+        "hash" => "",
+        "shard" => nil
+      }
+
+      assert {:error, _reason} =
+               Agent.resolve_command("make -C {package} {task}", payload)
+    end
+
+    test "extracts shard values from nested payload" do
+      payload = %{
+        "command" => "cmd",
+        "package" => "web",
+        "task" => "test",
+        "hash" => "abc",
+        "shard" => %{"index" => 2, "count" => 4}
+      }
+
+      assert {:ok, "run --shard 2/4"} =
+               Agent.resolve_command("run --shard {shard_index}/{shard_count}", payload)
+    end
+  end
+
+  describe "command template in GenServer" do
+    test "assign_task with template error reports exit_code -1" do
+      state = base_state(%{command_template: "make -C {package} {task}"})
+
+      msg =
+        {:channel_message, "agent:s1", "assign_task",
+         %{
+           "task_id" => "t1",
+           "package" => "",
+           "task" => "build",
+           "command" => "echo hello"
+         }}
+
+      assert {:noreply, new_state, 60_000} = Agent.handle_info(msg, state)
+      assert new_state.current_port == nil
+
+      assert_receive {:"$gen_cast",
+                      {:push, "task_result",
+                       %{"task_id" => "t1", "exit_code" => -1, "duration_ms" => 0}}}
+    end
+
+    test "assign_task with template overrides payload command" do
+      state = base_state(%{command_template: "echo template-used"})
+
+      msg =
+        {:channel_message, "agent:s1", "assign_task",
+         %{
+           "task_id" => "t1",
+           "package" => "web",
+           "task" => "build",
+           "command" => "echo payload-command"
+         }}
+
+      assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
+      on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
+
+      assert_receive {_port, {:data, {:eol, "template-used"}}}, 1000
     end
   end
 

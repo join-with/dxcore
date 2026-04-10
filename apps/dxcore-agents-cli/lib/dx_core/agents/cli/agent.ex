@@ -14,7 +14,8 @@ defmodule DxCore.Agents.CLI.Agent do
     --token, -t <token>           Auth token (required)
     --work-dir, -w <path>         Working directory (default: ".")
     --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
-    --tags <tags>                 Comma-separated tags (e.g., gpu=true,arch=arm64)\
+    --tags <tags>                 Comma-separated tags (e.g., gpu=true,arch=arm64)
+    --command-template <tpl>      Override commands with template (e.g., "make -C {package} {task}")
   """
 
   use DxCore.Agents.CLI.Command
@@ -30,7 +31,8 @@ defmodule DxCore.Agents.CLI.Agent do
     :current_port,
     :current_task_id,
     :start_time,
-    :capabilities
+    :capabilities,
+    :command_template
   ]
 
   @idle_timeout_ms 60_000
@@ -52,6 +54,7 @@ defmodule DxCore.Agents.CLI.Agent do
     build_system = Keyword.get(opts, :build_system, "turbo")
     tags_string = Keyword.get(opts, :tags)
     capabilities = detect_capabilities(tags_string)
+    command_template = Keyword.get(opts, :command_template)
 
     adapter =
       case DxCore.Agents.BuildSystem.resolve(build_system) do
@@ -76,7 +79,8 @@ defmodule DxCore.Agents.CLI.Agent do
         token: token,
         work_dir: work_dir,
         adapter: adapter,
-        capabilities: capabilities
+        capabilities: capabilities,
+        command_template: command_template
       })
 
     case await_exit(pid) do
@@ -112,7 +116,8 @@ defmodule DxCore.Agents.CLI.Agent do
         session_id: config.session_id,
         work_dir: config.work_dir,
         adapter: config.adapter,
-        capabilities: config.capabilities
+        capabilities: config.capabilities,
+        command_template: config.command_template
       })
 
     log(state, "Waiting for connection...")
@@ -125,24 +130,38 @@ defmodule DxCore.Agents.CLI.Agent do
       log(state, "Warning: task already in progress, ignoring")
       {:noreply, state, idle_timeout(state)}
     else
-      %{"task_id" => task_id, "command" => command} = payload
+      %{"task_id" => task_id} = payload
       shard = payload["shard"]
       log(state, "Executing task #{task_id}")
 
-      try do
-        port = open_task_port(state.work_dir, command, shard)
+      case resolve_command(state.command_template, payload) do
+        {:ok, command} ->
+          try do
+            port = open_task_port(state.work_dir, command, shard)
 
-        new_state = %{
-          state
-          | current_port: port,
-            current_task_id: task_id,
-            start_time: System.monotonic_time(:millisecond)
-        }
+            new_state = %{
+              state
+              | current_port: port,
+                current_task_id: task_id,
+                start_time: System.monotonic_time(:millisecond)
+            }
 
-        {:noreply, new_state, idle_timeout(new_state)}
-      rescue
-        e ->
-          log(state, "Failed to start task #{task_id}: #{Exception.message(e)}")
+            {:noreply, new_state, idle_timeout(new_state)}
+          rescue
+            e ->
+              log(state, "Failed to start task #{task_id}: #{Exception.message(e)}")
+
+              DxCore.Agents.WsClient.push(state.client, "task_result", %{
+                "task_id" => task_id,
+                "exit_code" => -1,
+                "duration_ms" => 0
+              })
+
+              {:noreply, state, @idle_timeout_ms}
+          end
+
+        {:error, reason} ->
+          log(state, "Command template error for #{task_id}: #{reason}")
 
           DxCore.Agents.WsClient.push(state.client, "task_result", %{
             "task_id" => task_id,
@@ -322,7 +341,8 @@ defmodule DxCore.Agents.CLI.Agent do
           session_id: :string,
           token: :string,
           build_system: :string,
-          tags: :string
+          tags: :string,
+          command_template: :string
         ],
         aliases: [
           c: :coordinator,
@@ -359,6 +379,34 @@ defmodule DxCore.Agents.CLI.Agent do
       [k, v] -> {String.trim(k), String.trim(v)}
       [k] -> {String.trim(k), "true"}
     end)
+  end
+
+  @doc false
+  def resolve_command(nil, payload) do
+    case payload["command"] do
+      nil -> {:error, "Payload missing required \"command\" field"}
+      cmd -> {:ok, cmd}
+    end
+  end
+
+  def resolve_command(template, payload) do
+    params = %{
+      "package" => payload["package"] || "",
+      "task" => payload["task"] || "",
+      "hash" => payload["hash"] || "",
+      "shard_index" => shard_value(payload, "index"),
+      "shard_count" => shard_value(payload, "count"),
+      "command" => payload["command"] || ""
+    }
+
+    DxCore.Agents.CLI.CommandTemplate.interpolate(template, params)
+  end
+
+  defp shard_value(payload, key) do
+    case get_in(payload, ["shard", key]) do
+      nil -> nil
+      val -> to_string(val)
+    end
   end
 
   defp detect_memory_mb do
