@@ -1,0 +1,10 @@
+{
+  "dev": {
+    "hash": "eb4aa7a9835dc340",
+    "tag": "v0.5.3-dev-eb4aa7a9835dc340"
+  },
+  "prod": {
+    "hash": "eb4aa7a9835dc340",
+    "tag": "v0.5.3-eb4aa7a9835dc340"
+  }
+}
