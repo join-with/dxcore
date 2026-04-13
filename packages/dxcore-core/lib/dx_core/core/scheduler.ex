@@ -80,7 +80,7 @@ defmodule DxCore.Core.Scheduler do
     session_id = Keyword.fetch!(opts, :session_id)
     plugin = Keyword.fetch!(opts, :plugin)
     context = Keyword.get(opts, :context, %{})
-    failure_strategy = Keyword.get(opts, :failure_strategy, :continue_all)
+    failure_strategy = Keyword.get(opts, :failure_strategy, :fail_fast)
     registry = Keyword.get(opts, :registry, @default_registry)
     name = {:via, Registry, {registry, {session_id, run_id}}}
 

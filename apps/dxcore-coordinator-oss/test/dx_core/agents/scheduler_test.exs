@@ -20,7 +20,8 @@ defmodule DxCore.Agents.SchedulerTest do
         graph: graph,
         run_id: "test-run-1",
         session_id: session_id,
-        plugin: DxCore.Core.Scheduler.NullPlugin
+        plugin: DxCore.Core.Scheduler.NullPlugin,
+        failure_strategy: :continue_all
       )
 
     %{scheduler: pid, session_id: session_id}
