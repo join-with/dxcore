@@ -1,5 +1,30 @@
 # @repo/dxcore-agents-cli
 
+## 0.6.0
+
+### Minor Changes
+
+- f94b66c: Add --command-template CLI flag to dxcore agent
+  - New CommandTemplate module interpolates {package}, {task}, {hash}, {shard_index}, {shard_count}, {command} placeholders
+  - Agent CLI accepts --command-template flag to override coordinator commands
+  - Template errors report as task failures (exit_code: -1)
+  - Documentation added to generic adapter configuration page
+
+### Patch Changes
+
+- edf5a3e: State-scanning CD pipeline: replace event-chaining with turbo-task-driven state reconciliation
+  - Add `repo-cli hash map` command for content hash generation
+  - Add `repo-cli release bump` command for release.json state management
+  - Add `repo-cli release publish` command with docker/github-release/npm strategies
+  - Add `repo-cli deploy bump` command for Pulumi imageTag reconciliation
+  - Add `hash`, `release-bump-dev/prod`, `release-dev/prod`, `deploy-bump-dev/prod`, `deploy-dev/prod` turbo tasks
+  - Add `release.json` per releasable package for tracking release state
+  - Add cd-release-bump.yml, cd-release.yml, cd-deploy-bump.yml, cd-deploy.yml workflow shells
+  - Add cd-auto-merge.yml for auto-approving dev PRs
+  - Add synthetic infra→app dependencies for turbo hash propagation
+  - Augment version-packages with release-bump-prod for changeset PR integration
+  - Seed Pulumi.dev.yaml imageTag fields for deploy-bump compatibility
+
 ## 0.5.3
 
 ### Patch Changes
