@@ -1,5 +1,13 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.0
+
+### Minor Changes
+
+- 6f70df3: Org-slug channel topic isolation and binary release support.
+  - dxcore-agents-cli: CLI auto-discovers org slug via /api/whoami for channel isolation (#1667), Burrito binary build (#1669)
+  - dxcore-coordinator-oss: topic assigns in channels (#1667), OTP release tarball build (#1669)
+
 ## 0.3.3
 
 ### Patch Changes
