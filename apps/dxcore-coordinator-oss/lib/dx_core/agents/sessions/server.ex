@@ -111,6 +111,17 @@ defmodule DxCore.Agents.Sessions.Server do
   end
 
   @impl true
+  def handle_call({:session_finished?, session_id}, _from, state) do
+    result =
+      case Map.fetch(state.sessions, session_id) do
+        {:ok, %{status: :finished}} -> true
+        _ -> false
+      end
+
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_call({:get_session, tenant_id, session_id}, _from, state) do
     case Map.fetch(state.sessions, session_id) do
       {:ok, %{tenant_id: ^tenant_id} = session} ->

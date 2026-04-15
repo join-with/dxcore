@@ -248,6 +248,14 @@ defmodule DxCore.Agents.CLI.Agent do
     {:noreply, state, idle_timeout(state)}
   end
 
+  def handle_info(
+        {:topic_closed, _topic, {:failed_to_join, %{"reason" => "session_finished"}}},
+        state
+      ) do
+    log(state, "Session already finished, exiting")
+    {:stop, :normal, state}
+  end
+
   def handle_info({:topic_closed, _topic, _reason}, state) do
     log(state, "Channel closed, waiting for reconnect...")
     {:noreply, state, idle_timeout(state)}

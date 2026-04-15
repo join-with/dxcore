@@ -265,6 +265,27 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
     end
 
+    test "topic_closed with session_finished join rejection exits normally" do
+      state = base_state()
+
+      assert {:stop, :normal, _state} =
+               Agent.handle_info(
+                 {:topic_closed, "agent:s1",
+                  {:failed_to_join, %{"reason" => "session_finished"}}},
+                 state
+               )
+    end
+
+    test "topic_closed with other join rejection falls through to idle timer" do
+      state = base_state()
+
+      assert {:noreply, _state, 60_000} =
+               Agent.handle_info(
+                 {:topic_closed, "agent:s1", {:failed_to_join, %{"reason" => "unauthorized"}}},
+                 state
+               )
+    end
+
     test "DOWN from client with reconnect_timeout stops agent normally" do
       state = base_state()
       ref = state.ws_monitor

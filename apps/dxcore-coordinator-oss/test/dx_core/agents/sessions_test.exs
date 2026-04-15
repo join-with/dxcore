@@ -264,6 +264,25 @@ defmodule DxCore.Agents.SessionsTest do
     end
   end
 
+  describe "session_finished?/1" do
+    test "returns false for non-existent session" do
+      refute Sessions.session_finished?("nonexistent-#{System.unique_integer([:positive])}")
+    end
+
+    test "returns false for active session" do
+      s = scope()
+      {:ok, session_id} = Sessions.create_session(s)
+      refute Sessions.session_finished?(session_id)
+    end
+
+    test "returns true for finished session" do
+      s = scope()
+      {:ok, session_id} = Sessions.create_session(s)
+      {:ok, _agents} = Sessions.finish_session(s, session_id)
+      assert Sessions.session_finished?(session_id)
+    end
+  end
+
   describe "auto-create session" do
     test "concurrent auto-creates don't fail" do
       s = scope()

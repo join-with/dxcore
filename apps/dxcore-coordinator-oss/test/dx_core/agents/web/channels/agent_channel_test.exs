@@ -285,6 +285,31 @@ defmodule DxCore.Agents.Web.AgentChannelTest do
     end
   end
 
+  describe "join/3 rejects finished sessions" do
+    test "returns error when session is finished" do
+      scope = Scope.for_tenant("test-tenant", "Test Corp")
+      {:ok, session_id} = Sessions.create_session(scope)
+      {:ok, _agents} = Sessions.finish_session(scope, session_id)
+
+      assert {:error, %{reason: "session_finished"}} =
+               DxCore.Agents.Web.AgentSocket
+               |> socket("user_id", %{current_scope: scope})
+               |> subscribe_and_join(DxCore.Agents.Web.AgentChannel, "agent:#{session_id}")
+    end
+
+    test "allows join for non-existent session (not yet created)" do
+      scope = Scope.for_tenant("test-tenant", "Test Corp")
+
+      {:ok, _, _socket} =
+        DxCore.Agents.Web.AgentSocket
+        |> socket("user_id", %{current_scope: scope})
+        |> subscribe_and_join(
+          DxCore.Agents.Web.AgentChannel,
+          "agent:new-session-#{System.unique_integer([:positive])}"
+        )
+    end
+  end
+
   describe "handle_out tasks_available" do
     test "tries to assign task when no current task", %{session_id: session_id} do
       scope = Scope.for_tenant("test-tenant", "Test Corp")

@@ -102,4 +102,14 @@ defmodule DxCore.Agents.Sessions do
   def shutdown_all_sessions do
     GenServer.call(Server, :shutdown_all_sessions)
   end
+
+  @doc """
+  Returns true if the session exists and has been finished.
+  Returns false if the session doesn't exist or is still active.
+  No scope needed — used by agent channel join gate.
+  """
+  @spec session_finished?(binary()) :: boolean()
+  def session_finished?(session_id) do
+    GenServer.call(Server, {:session_finished?, session_id})
+  end
 end

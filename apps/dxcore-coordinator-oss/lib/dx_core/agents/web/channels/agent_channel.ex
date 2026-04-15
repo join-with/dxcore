@@ -10,14 +10,18 @@ defmodule DxCore.Agents.Web.AgentChannel do
 
   @impl true
   def join("agent:" <> session_id, _params, socket) do
-    socket =
-      assign(socket,
-        session_id: session_id,
-        dispatcher_topic: "dispatcher:#{session_id}",
-        agent_topic: "agent:#{session_id}"
-      )
+    if Sessions.session_finished?(session_id) do
+      {:error, %{reason: "session_finished"}}
+    else
+      socket =
+        assign(socket,
+          session_id: session_id,
+          dispatcher_topic: "dispatcher:#{session_id}",
+          agent_topic: "agent:#{session_id}"
+        )
 
-    {:ok, socket}
+      {:ok, socket}
+    end
   end
 
   @impl true
