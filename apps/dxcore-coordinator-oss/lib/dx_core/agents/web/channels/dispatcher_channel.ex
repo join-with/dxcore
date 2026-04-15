@@ -5,7 +5,12 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
 
   @impl true
   def join("dispatcher:" <> session_id, _params, socket) do
-    {:ok, assign(socket, :session_id, session_id)}
+    {:ok,
+     assign(socket,
+       session_id: session_id,
+       dispatcher_topic: "dispatcher:#{session_id}",
+       agent_topic: "agent:#{session_id}"
+     )}
   end
 
   @impl true
@@ -41,7 +46,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
       pid ->
         DynamicSupervisor.terminate_child(DxCore.Core.SchedulerSupervisor, pid)
 
-        @endpoint.broadcast!("dispatcher:#{session_id}", "run_complete", %{
+        @endpoint.broadcast!(socket.assigns.dispatcher_topic, "run_complete", %{
           "run_id" => run_id,
           "status" => "cancelled",
           "summary" => nil
@@ -98,7 +103,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
           scheduler -> DxCore.Core.Scheduler.summary(scheduler)
         end
 
-      @endpoint.broadcast!("dispatcher:#{session_id}", "run_complete", %{
+      @endpoint.broadcast!(socket.assigns.dispatcher_topic, "run_complete", %{
         "run_id" => run_id,
         "status" => "complete",
         "summary" => DxCore.Core.RunSummary.serialize(summary)
@@ -107,7 +112,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
       Sessions.mark_run_complete(session_id, run_id)
     else
       # Notify agents in this session to check for tasks
-      DxCore.Agents.Web.Endpoint.broadcast!("agent:#{session_id}", "tasks_available", %{})
+      DxCore.Agents.Web.Endpoint.broadcast!(socket.assigns.agent_topic, "tasks_available", %{})
     end
 
     {:reply,

@@ -32,7 +32,8 @@ defmodule DxCore.Agents.CLI.Agent do
     :current_task_id,
     :start_time,
     :capabilities,
-    :command_template
+    :command_template,
+    :org_slug
   ]
 
   @idle_timeout_ms 60_000
@@ -55,6 +56,17 @@ defmodule DxCore.Agents.CLI.Agent do
     tags_string = Keyword.get(opts, :tags)
     capabilities = detect_capabilities(tags_string)
     command_template = Keyword.get(opts, :command_template)
+
+    org_slug =
+      case DxCore.Agents.CLI.fetch_org_slug(coordinator_url, token) do
+        {:ok, slug} ->
+          IO.puts("[agent:#{agent_id}@#{session_id}] Org: #{slug}")
+          slug
+
+        {:error, reason} ->
+          IO.puts("[agent:#{agent_id}@#{session_id}] Failed to fetch org: #{inspect(reason)}")
+          System.halt(1)
+      end
 
     adapter =
       case DxCore.Agents.BuildSystem.resolve(build_system) do
@@ -80,7 +92,8 @@ defmodule DxCore.Agents.CLI.Agent do
         work_dir: work_dir,
         adapter: adapter,
         capabilities: capabilities,
-        command_template: command_template
+        command_template: command_template,
+        org_slug: org_slug
       })
 
     case await_exit(pid) do
@@ -97,10 +110,12 @@ defmodule DxCore.Agents.CLI.Agent do
   def init(config) do
     ws_url = DxCore.Agents.CLI.http_to_ws(config.coordinator_url) <> "/agent/websocket"
 
+    topic = "agent:#{config.org_slug}:#{config.session_id}"
+
     {:ok, client} =
       DxCore.Agents.WsClient.start_link(
         url: ws_url,
-        topic: "agent:#{config.session_id}",
+        topic: topic,
         caller: self(),
         token: config.token
       )
@@ -117,7 +132,8 @@ defmodule DxCore.Agents.CLI.Agent do
         work_dir: config.work_dir,
         adapter: config.adapter,
         capabilities: config.capabilities,
-        command_template: config.command_template
+        command_template: config.command_template,
+        org_slug: config.org_slug
       })
 
     log(state, "Waiting for connection...")

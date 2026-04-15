@@ -30,7 +30,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     :timeout_ms,
     :tasks,
     :shard_config,
-    :failure_strategy
+    :failure_strategy,
+    :org_slug
   ]
 
   @default_timeout_s 900
@@ -48,6 +49,17 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     timeout_ms = Keyword.get(opts, :timeout, @default_timeout_s) * 1000
     build_system = Keyword.get(opts, :build_system, "turbo")
     failure_strategy = opts[:failure_strategy]
+
+    org_slug =
+      case DxCore.Agents.CLI.fetch_org_slug(coordinator_url, token) do
+        {:ok, slug} ->
+          IO.puts("[dispatcher:#{session_id}] Org: #{slug}")
+          slug
+
+        {:error, reason} ->
+          IO.puts("[dispatcher:#{session_id}] Failed to fetch org: #{inspect(reason)}")
+          System.halt(1)
+      end
 
     work_dir = Keyword.get(opts, :work_dir, ".")
     shard_config = DxCore.Agents.ShardConfig.scan(work_dir)
@@ -74,7 +86,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
             tasks: tasks,
             timeout_ms: timeout_ms,
             shard_config: shard_config,
-            failure_strategy: failure_strategy
+            failure_strategy: failure_strategy,
+            org_slug: org_slug
           })
 
         case await_exit(pid) do
@@ -122,10 +135,12 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def init(config) do
     ws_url = DxCore.Agents.CLI.http_to_ws(config.coordinator_url) <> "/dispatcher/websocket"
 
+    topic = "dispatcher:#{config.org_slug}:#{config.session_id}"
+
     {:ok, client} =
       DxCore.Agents.WsClient.start_link(
         url: ws_url,
-        topic: "dispatcher:#{config.session_id}",
+        topic: topic,
         caller: self(),
         token: config.token
       )
@@ -144,7 +159,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
         timeout_ms: config.timeout_ms,
         tasks: config.tasks,
         shard_config: config[:shard_config] || %{},
-        failure_strategy: config[:failure_strategy]
+        failure_strategy: config[:failure_strategy],
+        org_slug: config.org_slug
       })
 
     {:ok, state, state.timeout_ms}

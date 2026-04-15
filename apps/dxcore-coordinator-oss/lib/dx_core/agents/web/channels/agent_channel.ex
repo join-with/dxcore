@@ -10,7 +10,13 @@ defmodule DxCore.Agents.Web.AgentChannel do
 
   @impl true
   def join("agent:" <> session_id, _params, socket) do
-    socket = assign(socket, :session_id, session_id)
+    socket =
+      assign(socket,
+        session_id: session_id,
+        dispatcher_topic: "dispatcher:#{session_id}",
+        agent_topic: "agent:#{session_id}"
+      )
+
     {:ok, socket}
   end
 
@@ -40,7 +46,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
           joined_at: System.system_time(:second)
         })
 
-        @endpoint.broadcast!("dispatcher:#{session_id}", "agent_connected", %{
+        @endpoint.broadcast!(socket.assigns.dispatcher_topic, "agent_connected", %{
           "agent_id" => agent_id
         })
 
@@ -62,7 +68,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
 
     {:ok, run_status} = Scheduler.report_result(scheduler, task_id, result)
 
-    @endpoint.broadcast!("dispatcher:#{session_id}", "task_completed", %{
+    @endpoint.broadcast!(socket.assigns.dispatcher_topic, "task_completed", %{
       "task_id" => task_id,
       "agent_id" => socket.assigns[:agent_id],
       "exit_code" => exit_code,
@@ -95,7 +101,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
       summary = %{scheduler_summary | failures: failures_with_output}
       DxCore.Core.TaskLogBuffer.cleanup(:dxcore_oss_task_log_buffer, session_id)
 
-      @endpoint.broadcast!("dispatcher:#{session_id}", "run_complete", %{
+      @endpoint.broadcast!(socket.assigns.dispatcher_topic, "run_complete", %{
         "run_id" => run_id,
         "status" => to_string(run_status),
         "summary" => DxCore.Core.RunSummary.serialize(summary)
@@ -116,7 +122,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
     session_id = socket.assigns.session_id
     agent_id = socket.assigns[:agent_id]
 
-    @endpoint.broadcast!("dispatcher:#{session_id}", "task_log", %{
+    @endpoint.broadcast!(socket.assigns.dispatcher_topic, "task_log", %{
       "agent_id" => agent_id,
       "task_id" => task_id,
       "line" => line

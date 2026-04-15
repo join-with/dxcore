@@ -5,6 +5,25 @@ defmodule DxCore.Agents.CLI do
   - `dispatch` -- runs turbo --dry=json, submits graph to coordinator
   """
 
+  @doc """
+  Fetches the org slug from the coordinator's /api/whoami endpoint.
+  Returns `{:ok, slug}` or `{:error, reason}`.
+  """
+  def fetch_org_slug(coordinator_url, token) do
+    url = "#{coordinator_url}/api/whoami"
+
+    case Req.get(url, headers: [{"authorization", "Bearer #{token}"}]) do
+      {:ok, %{status: 200, body: %{"org_slug" => slug}}} ->
+        {:ok, slug}
+
+      {:ok, %{status: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   @doc false
   def http_to_ws(url) do
     url

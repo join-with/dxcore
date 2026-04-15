@@ -43,6 +43,7 @@ defmodule DxCore.Core.ChannelHelpers do
         agent_id = socket.assigns.agent_id
         session_id = socket.assigns.session_id
         agent_info = socket.assigns.agent_info
+        dispatcher_topic = socket.assigns.dispatcher_topic
 
         scheduler_pids = DxCore.Core.Scheduler.list_for_session(session_id)
 
@@ -65,7 +66,7 @@ defmodule DxCore.Core.ChannelHelpers do
               "shard" => task.shard
             })
 
-            @__channel_endpoint.broadcast!("dispatcher:#{session_id}", "task_started", %{
+            @__channel_endpoint.broadcast!(dispatcher_topic, "task_started", %{
               "task_id" => task.task_id,
               "agent_id" => agent_id
             })
@@ -80,13 +81,12 @@ defmodule DxCore.Core.ChannelHelpers do
       end
 
       defp handle_disconnect(socket) do
-        session_id = socket.assigns[:session_id]
         agent_id = socket.assigns[:agent_id]
 
         if agent_id do
-          if session_id do
+          if dispatcher_topic = socket.assigns[:dispatcher_topic] do
             @__channel_endpoint.broadcast!(
-              "dispatcher:#{session_id}",
+              dispatcher_topic,
               "agent_disconnected",
               %{"agent_id" => agent_id}
             )
@@ -97,8 +97,8 @@ defmodule DxCore.Core.ChannelHelpers do
             scheduler -> DxCore.Core.Scheduler.reassign_task(scheduler, agent_id)
           end
 
-          if session_id do
-            @__channel_endpoint.broadcast!("agent:#{session_id}", "tasks_available", %{})
+          if agent_topic = socket.assigns[:agent_topic] do
+            @__channel_endpoint.broadcast!(agent_topic, "tasks_available", %{})
           end
         end
 
