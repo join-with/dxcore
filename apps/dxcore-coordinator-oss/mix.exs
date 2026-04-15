@@ -10,7 +10,8 @@ defmodule DxCore.Agents.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      releases: releases()
     ]
   end
 
@@ -47,6 +48,15 @@ defmodule DxCore.Agents.MixProject do
     [
       setup: ["deps.get"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+    ]
+  end
+
+  defp releases do
+    [
+      dxcore_coordinator_oss: [
+        include_executables_for: [:unix],
+        strip_beams: true
+      ]
     ]
   end
 end
