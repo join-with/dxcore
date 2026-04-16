@@ -171,7 +171,7 @@ cd packages/dxcore-core && mix test               # Run core library tests direc
 
 ## Trademarks
 
-DxCore is an independent product developed by [JoinWith](https://joinwith.com). It is not affiliated with, endorsed by, or sponsored by any of the third-party projects or companies listed below.
+DxCore is an independent project by Eyal Lapid ([JoinWith](https://joinwith.com)). It is not affiliated with, endorsed by, or sponsored by any of the third-party projects or companies listed below.
 
 - **Turborepo** is a trademark of Vercel, Inc.
 - **Nx** is a trademark of Narwhal Technologies, Inc. (Nrwl).
