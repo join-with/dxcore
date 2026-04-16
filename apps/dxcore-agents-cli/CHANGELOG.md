@@ -1,5 +1,14 @@
 # @repo/dxcore-agents-cli
 
+## 0.7.2
+
+### Patch Changes
+
+- e2c111f: Align dxcore CLI binary asset naming: Burrito target includes arch suffix, upload uses filename directly, consumer actions match.
+- 5762010: Fix run summary table column alignment by computing widths dynamically instead of using hardcoded padding values.
+- Updated dependencies [e2c111f]
+  - @repo/repo-cli@0.5.2
+
 ## 0.7.1
 
 ### Patch Changes
