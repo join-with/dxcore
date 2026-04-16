@@ -168,3 +168,15 @@ cd apps/dxcore-coordinator-oss && mix test        # Run coordinator tests direct
 cd apps/dxcore-agents-cli && mix test             # Run CLI tests directly
 cd packages/dxcore-core && mix test               # Run core library tests directly
 ```
+
+## Trademarks
+
+DxCore is an independent product developed by [JoinWith](https://joinwith.com). It is not affiliated with, endorsed by, or sponsored by any of the third-party projects or companies listed below.
+
+- **Turborepo** is a trademark of Vercel, Inc.
+- **Nx** is a trademark of Narwhal Technologies, Inc. (Nrwl).
+- **Gradle** is a trademark of Gradle, Inc.
+- **Docker** and **Docker Buildx** are trademarks of Docker, Inc.
+- **GitHub** and **GitHub Actions** are trademarks of GitHub, Inc. (a Microsoft company).
+
+All other trademarks are the property of their respective owners. Use of these names is for identification purposes only and does not imply endorsement.
