@@ -475,6 +475,60 @@ defmodule DxCore.Core.SchedulerTest do
     end
   end
 
+  describe "requirements propagation" do
+    test "TaskState carries requirements from TaskGraph.Task" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "cli#build",
+              "task" => "build",
+              "package" => "cli",
+              "hash" => "abc",
+              "command" => "mix compile",
+              "dependencies" => [],
+              "dependents" => [],
+              "cache" => %{"status" => "MISS"},
+              "requirements" => %{"zig" => "true"}
+            }
+          ]
+        })
+
+      {:ok, graph} = TaskGraph.parse(json)
+      session_id = unique_session_id()
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "run-req",
+          session_id: session_id,
+          plugin: RecordingPlugin,
+          context: %{}
+        )
+
+      {:ok, task_state} = Scheduler.request_task(pid, "agent-1")
+      assert task_state.requirements == %{"zig" => "true"}
+    end
+
+    test "TaskState defaults requirements to empty map" do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_simple.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+      session_id = unique_session_id()
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "run-no-req",
+          session_id: session_id,
+          plugin: RecordingPlugin,
+          context: %{}
+        )
+
+      {:ok, task_state} = Scheduler.request_task(pid, "agent-1")
+      assert task_state.requirements == %{}
+    end
+  end
+
   describe "completed_by" do
     test "preserves agent_id after task completion", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")

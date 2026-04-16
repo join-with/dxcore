@@ -345,7 +345,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
                       {:push_and_wait, "submit_graph",
                        %{
                          "run_id" => "r1",
-                         "tasks" => [%{"taskId" => "t1"}],
+                         "tasks" => [%{"taskId" => "t1", "requirements" => %{}}],
                          "shard_config" => %{}
                        }}}
     end
@@ -373,7 +373,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
                       {:push_and_wait, "submit_graph",
                        %{
                          "run_id" => "r1",
-                         "tasks" => [%{"taskId" => "t1"}],
+                         "tasks" => [%{"taskId" => "t1", "requirements" => %{}}],
                          "shard_config" => %{"e2e-app#test" => 4}
                        }}}
     end
@@ -417,6 +417,140 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     test "unknown message returns noreply with timeout" do
       state = base_state()
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(:something_random, state)
+    end
+  end
+
+  describe "resolve_requirements/1" do
+    setup do
+      # Create temporary package dirs with package.json files
+      tmp_dir = Path.join(System.tmp_dir!(), "dxcore-test-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(tmp_dir, "apps/cli"))
+      File.mkdir_p!(Path.join(tmp_dir, "apps/web"))
+      File.mkdir_p!(Path.join(tmp_dir, "packages/lib"))
+
+      # cli: has * default and per-task override
+      File.write!(
+        Path.join(tmp_dir, "apps/cli/package.json"),
+        Jason.encode!(%{
+          "name" => "@repo/cli",
+          "dxcore" => %{
+            "requirements" => %{
+              "*" => %{"zig" => "true"},
+              "release-dev" => %{"zig" => "true", "github-release" => "true"}
+            }
+          }
+        })
+      )
+
+      # web: has docker requirement for all tasks
+      File.write!(
+        Path.join(tmp_dir, "apps/web/package.json"),
+        Jason.encode!(%{
+          "name" => "@repo/web",
+          "dxcore" => %{
+            "requirements" => %{
+              "*" => %{"docker" => "true"}
+            }
+          }
+        })
+      )
+
+      # lib: no dxcore config
+      File.write!(
+        Path.join(tmp_dir, "packages/lib/package.json"),
+        Jason.encode!(%{
+          "name" => "@repo/lib"
+        })
+      )
+
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    test "resolves exact task name over * default", %{tmp_dir: tmp_dir} do
+      tasks = [
+        %{
+          "taskId" => "cli#release-dev",
+          "task" => "release-dev",
+          "package" => "@repo/cli",
+          "directory" => Path.join(tmp_dir, "apps/cli")
+        }
+      ]
+
+      result = Dispatcher.resolve_requirements(tasks)
+      assert hd(result)["requirements"] == %{"zig" => "true", "github-release" => "true"}
+    end
+
+    test "falls back to * when no exact task match", %{tmp_dir: tmp_dir} do
+      tasks = [
+        %{
+          "taskId" => "cli#build",
+          "task" => "build",
+          "package" => "@repo/cli",
+          "directory" => Path.join(tmp_dir, "apps/cli")
+        }
+      ]
+
+      result = Dispatcher.resolve_requirements(tasks)
+      assert hd(result)["requirements"] == %{"zig" => "true"}
+    end
+
+    test "defaults to empty map when no dxcore config", %{tmp_dir: tmp_dir} do
+      tasks = [
+        %{
+          "taskId" => "lib#build",
+          "task" => "build",
+          "package" => "@repo/lib",
+          "directory" => Path.join(tmp_dir, "packages/lib")
+        }
+      ]
+
+      result = Dispatcher.resolve_requirements(tasks)
+      assert hd(result)["requirements"] == %{}
+    end
+
+    test "handles missing package.json gracefully", %{tmp_dir: tmp_dir} do
+      tasks = [
+        %{
+          "taskId" => "missing#build",
+          "task" => "build",
+          "package" => "@repo/missing",
+          "directory" => Path.join(tmp_dir, "apps/missing")
+        }
+      ]
+
+      result = Dispatcher.resolve_requirements(tasks)
+      assert hd(result)["requirements"] == %{}
+    end
+
+    test "processes multiple tasks from different packages", %{tmp_dir: tmp_dir} do
+      tasks = [
+        %{
+          "taskId" => "cli#build",
+          "task" => "build",
+          "package" => "@repo/cli",
+          "directory" => Path.join(tmp_dir, "apps/cli")
+        },
+        %{
+          "taskId" => "web#build",
+          "task" => "build",
+          "package" => "@repo/web",
+          "directory" => Path.join(tmp_dir, "apps/web")
+        },
+        %{
+          "taskId" => "lib#build",
+          "task" => "build",
+          "package" => "@repo/lib",
+          "directory" => Path.join(tmp_dir, "packages/lib")
+        }
+      ]
+
+      result = Dispatcher.resolve_requirements(tasks)
+      requirements = Enum.map(result, & &1["requirements"])
+
+      assert Enum.at(requirements, 0) == %{"zig" => "true"}
+      assert Enum.at(requirements, 1) == %{"docker" => "true"}
+      assert Enum.at(requirements, 2) == %{}
     end
   end
 

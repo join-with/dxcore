@@ -225,9 +225,11 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def handle_info({:joined, _topic}, %{tasks: tasks} = state) when tasks != nil do
     IO.puts("[dispatcher:#{state.session_id}] Connected, submitting task graph...")
 
+    resolved_tasks = resolve_requirements(tasks)
+
     payload = %{
       "run_id" => state.run_id,
-      "tasks" => tasks,
+      "tasks" => resolved_tasks,
       "shard_config" => state.shard_config || %{}
     }
 
@@ -290,6 +292,41 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     IO.puts("[dispatcher:#{state.session_id}] Unexpected message: #{inspect(msg)}")
     {:noreply, state, state.timeout_ms}
   end
+
+  @doc """
+  Resolves dxcore requirements from each task's package.json.
+
+  For each task, reads `package.json` from the task's `directory` field,
+  extracts `dxcore.requirements`, and matches by exact task name or `*` fallback.
+  Attaches the resolved `requirements` map to each task.
+  """
+  def resolve_requirements(tasks) do
+    Enum.map(tasks, fn task ->
+      requirements = resolve_task_requirements(task)
+      Map.put(task, "requirements", requirements)
+    end)
+  end
+
+  defp resolve_task_requirements(%{"directory" => dir, "task" => task_name})
+       when is_binary(dir) do
+    package_json_path = Path.join(dir, "package.json")
+
+    case File.read(package_json_path) do
+      {:ok, content} ->
+        case Jason.decode(content) do
+          {:ok, %{"dxcore" => %{"requirements" => reqs}}} when is_map(reqs) ->
+            Map.get(reqs, task_name, Map.get(reqs, "*", %{}))
+
+          _ ->
+            %{}
+        end
+
+      {:error, _} ->
+        %{}
+    end
+  end
+
+  defp resolve_task_requirements(_), do: %{}
 
   @doc "Format a run summary map into a printable string."
   def format_summary(summary) do

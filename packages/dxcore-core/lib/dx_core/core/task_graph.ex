@@ -18,7 +18,8 @@ defmodule DxCore.Core.TaskGraph do
             dependents: [String.t()],
             cache_status: :hit | :miss,
             cacheable: boolean(),
-            shard: map() | nil
+            shard: map() | nil,
+            requirements: map()
           }
 
     defstruct [
@@ -31,7 +32,8 @@ defmodule DxCore.Core.TaskGraph do
       :shard,
       deps: [],
       dependents: [],
-      cacheable: false
+      cacheable: false,
+      requirements: %{}
     ]
   end
 
@@ -98,7 +100,8 @@ defmodule DxCore.Core.TaskGraph do
       dependents: raw["dependents"] || [],
       cache_status: parse_cache_status(raw),
       cacheable: parse_cacheable(raw),
-      shard: parse_shard(raw["shard"])
+      shard: parse_shard(raw["shard"]),
+      requirements: raw["requirements"] || %{}
     }
   end
 

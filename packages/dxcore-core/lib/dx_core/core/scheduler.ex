@@ -32,6 +32,7 @@ defmodule DxCore.Core.Scheduler do
             deps: [String.t()],
             dependents: [String.t()],
             shard: map() | nil,
+            requirements: map(),
             status: :pending | :running | :done | :failed | :skipped,
             assigned_to: String.t() | nil,
             completed_by: String.t() | nil,
@@ -60,7 +61,8 @@ defmodule DxCore.Core.Scheduler do
       :started_at_mono,
       :exit_code,
       :duration_ms,
-      :cache_status
+      :cache_status,
+      requirements: %{}
     ]
   end
 
@@ -163,6 +165,7 @@ defmodule DxCore.Core.Scheduler do
            deps: t.deps,
            dependents: t.dependents,
            shard: t.shard,
+           requirements: t.requirements,
            status: if(t.cache_status == :hit, do: :done, else: :pending),
            assigned_to: nil,
            completed_by: nil,

@@ -120,6 +120,32 @@ defmodule DxCore.Core.TaskGraphTest do
     test "returns error when tasks key is missing" do
       assert {:error, :missing_tasks_key} = TaskGraph.parse(~s({"id": "no-tasks"}))
     end
+
+    test "parses requirements field from tasks" do
+      json = read_fixture("dry_run_with_requirements.json")
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+
+      assert tasks["cli#build"].requirements == %{"zig" => "true"}
+
+      assert tasks["cli#release-dev"].requirements == %{
+               "zig" => "true",
+               "github-release" => "true"
+             }
+    end
+
+    test "defaults requirements to empty map when not present" do
+      json = read_fixture("dry_run_with_requirements.json")
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+
+      assert tasks["web#build"].requirements == %{}
+    end
+
+    test "existing fixtures have empty requirements by default" do
+      json = read_fixture("dry_run_simple.json")
+      {:ok, %TaskGraph{tasks: tasks}} = TaskGraph.parse(json)
+
+      assert tasks["@repo/ui#build"].requirements == %{}
+    end
   end
 
   describe "parse_shard/1" do

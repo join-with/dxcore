@@ -1,0 +1,39 @@
+{
+  "id": "test-run-req",
+  "monorepo": true,
+  "packages": ["cli", "web"],
+  "tasks": [
+    {
+      "taskId": "cli#build",
+      "task": "build",
+      "package": "cli",
+      "hash": "abc123",
+      "command": "mix compile",
+      "dependencies": [],
+      "dependents": ["cli#release-dev"],
+      "cache": { "status": "MISS" },
+      "requirements": {"zig": "true"}
+    },
+    {
+      "taskId": "cli#release-dev",
+      "task": "release-dev",
+      "package": "cli",
+      "hash": "def456",
+      "command": "repo-cli release publish --env dev",
+      "dependencies": ["cli#build"],
+      "dependents": [],
+      "cache": { "status": "MISS" },
+      "requirements": {"zig": "true", "github-release": "true"}
+    },
+    {
+      "taskId": "web#build",
+      "task": "build",
+      "package": "web",
+      "hash": "ghi789",
+      "command": "docker build",
+      "dependencies": [],
+      "dependents": [],
+      "cache": { "status": "MISS" }
+    }
+  ]
+}
