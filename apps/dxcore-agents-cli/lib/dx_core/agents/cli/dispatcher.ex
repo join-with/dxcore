@@ -353,13 +353,21 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   defp format_tasks_table(tasks) do
-    tasks
-    |> Enum.map(fn t ->
-      status = format_task_status(t)
-      agent = t["agent_id"] || "—"
-      duration = format_duration(t["duration_ms"])
+    rows =
+      Enum.map(tasks, fn t ->
+        {t["task_id"], t["agent_id"] || "—", format_task_status(t),
+         format_duration(t["duration_ms"])}
+      end)
 
-      " #{String.pad_trailing(t["task_id"], 30)} #{String.pad_trailing(agent, 10)} #{String.pad_trailing(status, 9)} #{duration}"
+    {id_width, agent_width, status_width, dur_width} =
+      Enum.reduce(rows, {0, 0, 0, 0}, fn {id, a, s, d}, {iw, aw, sw, dw} ->
+        {max(iw, String.length(id)), max(aw, String.length(a)), max(sw, String.length(s)),
+         max(dw, String.length(d))}
+      end)
+
+    rows
+    |> Enum.map(fn {id, agent, status, duration} ->
+      " #{String.pad_trailing(id, id_width)}  #{String.pad_trailing(agent, agent_width)}  #{String.pad_trailing(status, status_width)}  #{String.pad_leading(duration, dur_width)}"
     end)
     |> Enum.join("\n")
   end

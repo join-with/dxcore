@@ -130,6 +130,51 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       assert output =~ "1 passed, 0 failed, 0 skipped, 1 cached"
     end
 
+    test "aligns columns dynamically with varying task ID lengths" do
+      summary = %{
+        "status" => "complete",
+        "tasks" => [
+          %{
+            "task_id" => "@repo/dxcore-coordinator-saas-e2e#build",
+            "package" => "@repo/dxcore-coordinator-saas-e2e",
+            "task" => "build",
+            "status" => "done",
+            "cached" => false,
+            "agent_id" => "agent-3",
+            "duration_ms" => 123_800,
+            "exit_code" => 0
+          },
+          %{
+            "task_id" => "@repo/infra-dxcore#lint",
+            "package" => "@repo/infra-dxcore",
+            "task" => "lint",
+            "status" => "done",
+            "cached" => false,
+            "agent_id" => "agent-1",
+            "duration_ms" => 2_600,
+            "exit_code" => 0
+          }
+        ],
+        "counts" => %{"passed" => 2, "failed" => 0, "skipped" => 0, "cached" => 0},
+        "failures" => []
+      }
+
+      output = Dispatcher.format_summary(summary)
+      lines = output |> String.split("\n") |> Enum.filter(&(&1 =~ ~r/@repo/))
+
+      # Both agent columns should start at the same position
+      positions = Enum.map(lines, fn line -> :binary.match(line, "agent-") |> elem(0) end)
+      assert length(Enum.uniq(positions)) == 1
+
+      # Both status columns should start at the same position
+      ok_positions = Enum.map(lines, fn line -> :binary.match(line, "OK") |> elem(0) end)
+      assert length(Enum.uniq(ok_positions)) == 1
+
+      # Duration column should be right-aligned (all values end at the same position)
+      end_positions = Enum.map(lines, &String.length(String.trim_trailing(&1)))
+      assert length(Enum.uniq(end_positions)) == 1
+    end
+
     test "formats failed run with failure details" do
       summary = %{
         "status" => "failed",
