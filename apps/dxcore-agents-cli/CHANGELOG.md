@@ -1,5 +1,13 @@
 # @repo/dxcore-agents-cli
 
+## 0.7.3
+
+### Patch Changes
+
+- b22fcd7: DxCore distributed CI reliability improvements: log agent tags on connect, handle dispatcher session_finished, remove idle timeout, narrow zig requirements, topology-aware unassignable task detection
+- Updated dependencies [ee4ac1c]
+  - @repo/repo-cli@0.5.3
+
 ## 0.7.2
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.3
+
+### Patch Changes
+
+- cef538c: Add observability stack: jw-observability package with OpenTelemetry (Grafana Cloud), Sentry error tracking, and structured JSON logging integrated into all Phoenix apps.
+- Updated dependencies [b22fcd7]
+- Updated dependencies [ee4ac1c]
+  - @repo/dxcore-core@0.5.0
+  - @repo/repo-cli@0.5.3
+
 ## 0.4.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.5.0
+
+### Minor Changes
+
+- b22fcd7: DxCore distributed CI reliability improvements: log agent tags on connect, handle dispatcher session_finished, remove idle timeout, narrow zig requirements, topology-aware unassignable task detection
+
 ## 0.4.0
 
 ### Minor Changes
