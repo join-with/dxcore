@@ -7,6 +7,9 @@
 # General application configuration
 import Config
 
+config :jw_observability,
+  otp_app: :dxcore_coordinator_oss
+
 config :dxcore_coordinator_oss,
   generators: [timestamp_type: :utc_datetime],
   scheduler_plugin: DxCore.Core.Scheduler.NullPlugin

@@ -20,6 +20,47 @@ if System.get_env("PHX_SERVER") do
   config :dxcore_coordinator_oss, DxCore.Agents.Web.Endpoint, server: true
 end
 
+config :jw_observability,
+  grafana_otlp_endpoint: System.get_env("GRAFANA_CLOUD_OTLP_ENDPOINT"),
+  grafana_api_key: System.get_env("GRAFANA_CLOUD_API_KEY"),
+  sentry_dsn: System.get_env("SENTRY_DSN"),
+  environment: System.get_env("RELEASE_ENV", to_string(config_env())),
+  trace_sample_rate: System.get_env("JW_TRACE_SAMPLE_RATE", "1.0")
+
+# OpenTelemetry config — must be in runtime.exs because OTel reads config at boot.
+# When no endpoint is set (dev/test), traces are disabled.
+otlp_endpoint = System.get_env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+otlp_key = System.get_env("GRAFANA_CLOUD_API_KEY")
+trace_rate = System.get_env("JW_TRACE_SAMPLE_RATE", "1.0")
+
+config :opentelemetry,
+  resource: [
+    "service.name": "dxcore_coordinator_oss",
+    "deployment.environment": System.get_env("RELEASE_ENV", to_string(config_env()))
+  ],
+  sampler:
+    (case trace_rate do
+       "1.0" ->
+         {:otel_sampler_always_on, %{}}
+
+       rate ->
+         case Float.parse(rate) do
+           {f, _} -> {:otel_sampler_trace_id_ratio_based, f}
+           :error -> raise "Invalid JW_TRACE_SAMPLE_RATE: #{inspect(rate)}"
+         end
+     end),
+  traces_exporter: if(otlp_endpoint && otlp_key, do: :otlp, else: :none)
+
+# Exporter config — separate app, must be configured independently.
+# When no endpoint is set (dev/test), the exporter is not configured and
+# the SDK falls back to :none (no export).
+if otlp_endpoint && otlp_key do
+  config :opentelemetry_exporter,
+    otlp_protocol: :http_protobuf,
+    otlp_endpoint: otlp_endpoint,
+    otlp_headers: [{"Authorization", "Basic #{otlp_key}"}]
+end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

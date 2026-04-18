@@ -1,5 +1,6 @@
 defmodule DxCore.Agents.Web.Endpoint do
   use Phoenix.Endpoint, otp_app: :dxcore_coordinator_oss
+  use Sentry.PlugCapture
 
   # check_origin disabled: agents connect via Tailscale IP, not a hostname
   socket "/agent", DxCore.Agents.Web.AgentSocket,
@@ -48,5 +49,6 @@ defmodule DxCore.Agents.Web.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  plug Sentry.PlugContext
   plug DxCore.Agents.Web.Router
 end

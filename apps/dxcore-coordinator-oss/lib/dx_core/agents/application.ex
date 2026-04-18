@@ -7,6 +7,7 @@ defmodule DxCore.Agents.Application do
 
   @impl true
   def start(_type, _args) do
+    JwObservability.setup(otp_app: :dxcore_coordinator_oss, repo_prefix: nil)
     :ets.new(:dxcore_agents_tenants, [:set, :public, :named_table, read_concurrency: true])
     DxCore.Agents.Tenants.seed_from_env()
 
