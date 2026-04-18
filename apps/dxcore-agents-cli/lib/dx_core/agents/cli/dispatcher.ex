@@ -31,7 +31,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     :tasks,
     :shard_config,
     :failure_strategy,
-    :org_slug
+    :org_slug,
+    connected_agents: 0
   ]
 
   @default_timeout_s 900
@@ -205,12 +206,20 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   def handle_info({:channel_message, _topic, "agent_connected", payload}, state) do
     IO.puts("[coordinator] Agent #{payload["agent_id"]} connected")
-    {:noreply, state, state.timeout_ms}
+    {:noreply, %{state | connected_agents: state.connected_agents + 1}, state.timeout_ms}
   end
 
   def handle_info({:channel_message, _topic, "agent_disconnected", payload}, state) do
     IO.puts("[coordinator] Agent #{payload["agent_id"]} disconnected")
-    {:noreply, state, state.timeout_ms}
+    new_count = max(state.connected_agents - 1, 0)
+
+    if new_count == 0 do
+      IO.puts(
+        "[dispatcher:#{state.session_id}] All agents disconnected, tasks may still be pending"
+      )
+    end
+
+    {:noreply, %{state | connected_agents: new_count}, state.timeout_ms}
   end
 
   def handle_info({:disconnected, reason}, state) do
@@ -260,6 +269,14 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def handle_info({:joined, _topic}, state) do
     IO.puts("[dispatcher:#{state.session_id}] Reconnected to coordinator")
     {:noreply, state, state.timeout_ms}
+  end
+
+  def handle_info(
+        {:topic_closed, _topic, {:failed_to_join, %{"reason" => "session_finished"}}},
+        state
+      ) do
+    IO.puts("[dispatcher:#{state.session_id}] Session already finished, exiting")
+    {:stop, :normal, state}
   end
 
   def handle_info({:topic_closed, _topic, _reason}, state) do

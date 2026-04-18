@@ -15,6 +15,8 @@ defmodule DxCore.Core.Scheduler do
 
   use GenServer
 
+  require Logger
+
   alias DxCore.Core.AgentInfo
   alias DxCore.Core.TaskGraph
 
@@ -145,6 +147,11 @@ defmodule DxCore.Core.Scheduler do
     GenServer.call(pid, :summary)
   end
 
+  @doc "Trigger topology evaluation. Called when agents connect or disconnect."
+  def check_topology(pid) do
+    GenServer.cast(pid, :check_topology)
+  end
+
   # ── Server callbacks ────────────────────────────────────────────────
 
   @impl true
@@ -189,7 +196,11 @@ defmodule DxCore.Core.Scheduler do
       agents: %{},
       frontier: frontier,
       failure_strategy: failure_strategy,
-      failed_fast: false
+      failed_fast: false,
+      topology_check: Map.get(context, :topology_check, "infer"),
+      expected_agents: get_in(context, [:topology, "agents"]),
+      topology_timer: nil,
+      topology_settled: false
     }
 
     {:ok, state}
@@ -376,6 +387,19 @@ defmodule DxCore.Core.Scheduler do
     {:reply, reply, state}
   end
 
+  @impl true
+  def handle_cast(:check_topology, state) do
+    alias DxCore.Core.Scheduler.TopologyEvaluator
+    {:noreply, TopologyEvaluator.evaluate(state)}
+  end
+
+  @impl true
+  def handle_info(:topology_stabilized, state) do
+    alias DxCore.Core.Scheduler.TopologyEvaluator
+    new_state = %{state | topology_settled: true, topology_timer: nil}
+    {:noreply, TopologyEvaluator.evaluate_assignability(new_state)}
+  end
+
   # ── Private helpers ─────────────────────────────────────────────────
 
   defp compute_duration(%{started_at_mono: nil}), do: 0
@@ -396,12 +420,10 @@ defmodule DxCore.Core.Scheduler do
       state.plugin.on_task_complete(task_state, result, duration_ms, agent_info, state.context)
     rescue
       e ->
-        require Logger
         Logger.warning("Plugin on_task_complete failed: #{inspect(e)}")
         :ok
     catch
       kind, reason ->
-        require Logger
         Logger.warning("Plugin on_task_complete failed (#{kind}): #{inspect(reason)}")
         :ok
     end
@@ -435,7 +457,8 @@ defmodule DxCore.Core.Scheduler do
     end)
   end
 
-  defp skip_all_pending(tasks) do
+  @doc false
+  def skip_all_pending(tasks) do
     Map.new(tasks, fn {id, task} ->
       if task.status == :pending do
         {id, %{task | status: :skipped}}
@@ -488,7 +511,8 @@ defmodule DxCore.Core.Scheduler do
     }
   end
 
-  defp compute_run_status(tasks, failed_fast) do
+  @doc false
+  def compute_run_status(tasks, failed_fast) do
     statuses = tasks |> Map.values() |> Enum.map(& &1.status)
 
     cond do

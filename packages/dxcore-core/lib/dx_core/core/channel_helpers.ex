@@ -97,6 +97,12 @@ defmodule DxCore.Core.ChannelHelpers do
             scheduler -> DxCore.Core.Scheduler.reassign_task(scheduler, agent_id)
           end
 
+          # Notify schedulers of topology change
+          for {pid, _run_id} <-
+                DxCore.Core.Scheduler.list_for_session(socket.assigns[:session_id] || "") do
+            DxCore.Core.Scheduler.check_topology(pid)
+          end
+
           if agent_topic = socket.assigns[:agent_topic] do
             @__channel_endpoint.broadcast!(agent_topic, "tasks_available", %{})
           end

@@ -33,4 +33,16 @@ defmodule DxCore.Core.SchedulerPlugin do
               agent :: AgentInfo.t(),
               context :: map()
             ) :: :ok
+
+  @doc """
+  Evaluate which frontier tasks can be assigned by the current set of connected agents.
+  Returns `{assignable, unassignable}` tuple of task lists.
+  Optional callback — defaults to treating all tasks as assignable.
+  """
+  @callback evaluate_assignability(
+              frontier :: [TaskState.t()],
+              agents :: [AgentInfo.t()]
+            ) :: {assignable :: [TaskState.t()], unassignable :: [TaskState.t()]}
+
+  @optional_callbacks [evaluate_assignability: 2]
 end

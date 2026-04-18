@@ -1,6 +1,8 @@
 defmodule DxCore.Agents.CLI.AgentTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO
+
   alias DxCore.Agents.CLI.Agent
 
   describe "parse_args/1" do
@@ -226,7 +228,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
     test "joined pushes agent_ready with capabilities" do
       state = base_state()
       msg = {:joined, "agent:s1"}
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
 
       assert_receive {:"$gen_cast",
                       {:push, "agent_ready",
@@ -235,9 +237,40 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert capabilities == state.capabilities
     end
 
-    test "timeout when idle stops the GenServer" do
+    test "joined logs tags when present" do
+      state =
+        base_state(%{
+          capabilities: %{"cpu_cores" => 4, "tags" => %{"zig" => "true", "gpu" => "true"}}
+        })
+
+      msg = {:joined, "agent:s1"}
+
+      output =
+        capture_io(fn ->
+          Agent.handle_info(msg, state)
+        end)
+
+      assert output =~ "Connected with tags:"
+      assert output =~ "zig"
+    end
+
+    test "joined logs no tags when empty" do
+      state = base_state(%{capabilities: %{"cpu_cores" => 4, "tags" => %{}}})
+      msg = {:joined, "agent:s1"}
+
+      output =
+        capture_io(fn ->
+          Agent.handle_info(msg, state)
+        end)
+
+      assert output =~ "Connected with no tags"
+    end
+
+    test "no idle timeout — agent waits indefinitely for tasks" do
       state = base_state()
-      assert {:stop, :normal, ^state} = Agent.handle_info(:timeout, state)
+      msg = {:joined, "agent:s1"}
+      # After removing idle timeout, handle_info returns {:noreply, state} (2-tuple, no timeout)
+      assert {:noreply, _state} = Agent.handle_info(msg, state)
     end
 
     test "shutdown when idle stops without reporting task_result" do
@@ -247,22 +280,22 @@ defmodule DxCore.Agents.CLI.AgentTest do
       refute_receive {:"$gen_cast", {:push, "task_result", _}}, 10
     end
 
-    test "presence_diff is ignored with idle timeout" do
+    test "presence_diff is ignored" do
       state = base_state()
       msg = {:channel_message, "agent:s1", "presence_diff", %{}}
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
     end
 
-    test "disconnected returns noreply with idle timeout" do
+    test "disconnected returns noreply" do
       state = base_state()
       msg = {:disconnected, :connection_reset}
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
     end
 
-    test "topic_closed returns noreply with idle timeout" do
+    test "topic_closed returns noreply" do
       state = base_state()
       msg = {:topic_closed, "agent:s1", :left}
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
     end
 
     test "topic_closed with session_finished join rejection exits normally" do
@@ -276,10 +309,10 @@ defmodule DxCore.Agents.CLI.AgentTest do
                )
     end
 
-    test "topic_closed with other join rejection falls through to idle timer" do
+    test "topic_closed with other join rejection falls through to noreply" do
       state = base_state()
 
-      assert {:noreply, _state, 60_000} =
+      assert {:noreply, _state} =
                Agent.handle_info(
                  {:topic_closed, "agent:s1", {:failed_to_join, %{"reason" => "unauthorized"}}},
                  state
@@ -314,9 +347,9 @@ defmodule DxCore.Agents.CLI.AgentTest do
                Agent.handle_info(msg, state)
     end
 
-    test "unknown message returns noreply with idle timeout" do
+    test "unknown message returns noreply" do
       state = base_state()
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(:something_random, state)
+      assert {:noreply, ^state} = Agent.handle_info(:something_random, state)
     end
 
     test "stale port data after exit_status is silently dropped" do
@@ -333,7 +366,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
       # State has no current_port (port already finished)
       state = base_state()
       msg = {port, {:data, {:eol, "stale output"}}}
-      assert {:noreply, ^state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
       refute_receive {:"$gen_cast", {:push, "task_log", _}}, 10
     end
 
@@ -393,7 +426,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
       state = base_state(%{current_port: port, current_task_id: "t1", start_time: start_time})
 
       msg = {port, {:exit_status, 0}}
-      assert {:noreply, new_state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, new_state} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
       assert new_state.current_task_id == nil
       assert new_state.start_time == nil
@@ -415,7 +448,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         })
 
       msg = {port, {:exit_status, 1}}
-      assert {:noreply, _new_state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, _new_state} = Agent.handle_info(msg, state)
 
       assert_receive {:"$gen_cast", {:push, "task_result", payload}}
       assert payload["exit_code"] == 1
@@ -448,7 +481,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{"task_id" => "t2", "package" => "pkg", "task" => "build", "command" => "echo hi"}}
 
-      assert {:noreply, ^state, :infinity} = Agent.handle_info(msg, state)
+      assert {:noreply, ^state} = Agent.handle_info(msg, state)
     end
   end
 
@@ -465,7 +498,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
            "command" => "definitely_not_a_real_command_xyz"
          }}
 
-      assert {:noreply, new_state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, new_state} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
       assert new_state.current_task_id == nil
 
@@ -625,7 +658,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
            "command" => "echo hello"
          }}
 
-      assert {:noreply, new_state, 60_000} = Agent.handle_info(msg, state)
+      assert {:noreply, new_state} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
 
       assert_receive {:"$gen_cast",

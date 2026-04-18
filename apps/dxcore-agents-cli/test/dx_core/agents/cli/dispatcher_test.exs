@@ -1,6 +1,8 @@
 defmodule DxCore.Agents.CLI.DispatcherTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO
+
   alias DxCore.Agents.CLI.Dispatcher
 
   describe "parse_args/1" do
@@ -272,7 +274,8 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
             session_id: "s1",
             run_id: "r1",
             timeout_ms: 60_000,
-            tasks: nil
+            tasks: nil,
+            connected_agents: 0
           },
           overrides
         )
@@ -343,22 +346,24 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
     end
 
-    test "agent_connected returns noreply with timeout" do
-      state = base_state()
+    test "agent_connected increments connected_agents and returns noreply with timeout" do
+      state = base_state(%{connected_agents: 0})
 
       msg =
         {:channel_message, "dispatcher:s1", "agent_connected", %{"agent_id" => "a1"}}
 
-      assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert new_state.connected_agents == 1
     end
 
-    test "agent_disconnected returns noreply with timeout" do
-      state = base_state()
+    test "agent_disconnected decrements connected_agents and returns noreply with timeout" do
+      state = base_state(%{connected_agents: 1})
 
       msg =
         {:channel_message, "dispatcher:s1", "agent_disconnected", %{"agent_id" => "a1"}}
 
-      assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert new_state.connected_agents == 0
     end
 
     test "disconnected returns noreply with timeout" do
@@ -433,6 +438,45 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       state = base_state()
       msg = {:topic_closed, "dispatcher:s1", :left}
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
+    end
+
+    test "topic_closed with session_finished exits normally" do
+      state = base_state()
+
+      assert {:stop, :normal, ^state} =
+               Dispatcher.handle_info(
+                 {:topic_closed, "dispatcher:s1",
+                  {:failed_to_join, %{"reason" => "session_finished"}}},
+                 state
+               )
+    end
+
+    test "agent_disconnected when last agent disconnects logs warning" do
+      state = base_state(%{connected_agents: 1})
+
+      msg =
+        {:channel_message, "dispatcher:s1", "agent_disconnected", %{"agent_id" => "a1"}}
+
+      output =
+        capture_io(fn ->
+          Dispatcher.handle_info(msg, state)
+        end)
+
+      assert output =~ "All agents disconnected"
+    end
+
+    test "agent_disconnected when other agents remain does not log warning" do
+      state = base_state(%{connected_agents: 2})
+
+      msg =
+        {:channel_message, "dispatcher:s1", "agent_disconnected", %{"agent_id" => "a1"}}
+
+      output =
+        capture_io(fn ->
+          Dispatcher.handle_info(msg, state)
+        end)
+
+      refute output =~ "All agents disconnected"
     end
 
     test "presence_diff returns noreply with timeout" do

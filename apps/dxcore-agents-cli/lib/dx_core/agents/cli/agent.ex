@@ -36,8 +36,6 @@ defmodule DxCore.Agents.CLI.Agent do
     :org_slug
   ]
 
-  @idle_timeout_ms 60_000
-
   # --- Public API ---
 
   def run([flag | _]) when flag in ["--help", "-h"] do
@@ -137,14 +135,14 @@ defmodule DxCore.Agents.CLI.Agent do
       })
 
     log(state, "Waiting for connection...")
-    {:ok, state, @idle_timeout_ms}
+    {:ok, state}
   end
 
   @impl GenServer
   def handle_info({:channel_message, _topic, "assign_task", payload}, state) do
     if state.current_port != nil do
       log(state, "Warning: task already in progress, ignoring")
-      {:noreply, state, idle_timeout(state)}
+      {:noreply, state}
     else
       %{"task_id" => task_id} = payload
       shard = payload["shard"]
@@ -162,7 +160,7 @@ defmodule DxCore.Agents.CLI.Agent do
                 start_time: System.monotonic_time(:millisecond)
             }
 
-            {:noreply, new_state, idle_timeout(new_state)}
+            {:noreply, new_state, :infinity}
           rescue
             e ->
               log(state, "Failed to start task #{task_id}: #{Exception.message(e)}")
@@ -173,7 +171,7 @@ defmodule DxCore.Agents.CLI.Agent do
                 "duration_ms" => 0
               })
 
-              {:noreply, state, @idle_timeout_ms}
+              {:noreply, state}
           end
 
         {:error, reason} ->
@@ -185,7 +183,7 @@ defmodule DxCore.Agents.CLI.Agent do
             "duration_ms" => 0
           })
 
-          {:noreply, state, @idle_timeout_ms}
+          {:noreply, state}
       end
     end
   end
@@ -198,7 +196,7 @@ defmodule DxCore.Agents.CLI.Agent do
       "line" => line
     })
 
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state, :infinity}
   end
 
   def handle_info({port, {:exit_status, exit_code}}, %{current_port: port} = state) do
@@ -212,7 +210,7 @@ defmodule DxCore.Agents.CLI.Agent do
     })
 
     new_state = %{state | current_port: nil, current_task_id: nil, start_time: nil}
-    {:noreply, new_state, @idle_timeout_ms}
+    {:noreply, new_state}
   end
 
   def handle_info({:channel_message, _topic, "shutdown", %{"reason" => reason}}, state) do
@@ -234,18 +232,26 @@ defmodule DxCore.Agents.CLI.Agent do
   end
 
   def handle_info({:channel_message, _topic, "presence_diff", _}, state) do
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state}
   end
 
   def handle_info({:joined, _topic}, state) do
-    log(state, "Connected, announcing ready")
+    tags = state.capabilities["tags"] || %{}
+
+    if tags == %{} do
+      log(state, "Connected with no tags")
+    else
+      log(state, "Connected with tags: #{inspect(tags)}")
+    end
+
+    log(state, "Announcing ready")
 
     DxCore.Agents.WsClient.push(state.client, "agent_ready", %{
       "agent_id" => state.agent_id,
       "capabilities" => state.capabilities
     })
 
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state}
   end
 
   def handle_info(
@@ -258,22 +264,17 @@ defmodule DxCore.Agents.CLI.Agent do
 
   def handle_info({:topic_closed, _topic, _reason}, state) do
     log(state, "Channel closed, waiting for reconnect...")
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state}
   end
 
   def handle_info({:disconnected, reason}, state) do
     log(state, "Lost connection: #{inspect(reason)}, waiting for reconnect...")
-    {:noreply, state, idle_timeout(state)}
-  end
-
-  def handle_info(:timeout, state) do
-    log(state, "No tasks for #{div(@idle_timeout_ms, 1000)}s, exiting")
-    {:stop, :normal, state}
+    {:noreply, state}
   end
 
   # Port messages arriving after exit_status (port already cleared from state)
   def handle_info({_port, {:data, _}}, state) do
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state}
   end
 
   def handle_info(
@@ -291,13 +292,10 @@ defmodule DxCore.Agents.CLI.Agent do
 
   def handle_info(msg, state) do
     log(state, "Unexpected message: #{inspect(msg)}")
-    {:noreply, state, idle_timeout(state)}
+    {:noreply, state}
   end
 
   # --- Private Helpers ---
-
-  defp idle_timeout(%{current_port: nil}), do: @idle_timeout_ms
-  defp idle_timeout(_state), do: :infinity
 
   defp log(%{agent_id: agent_id, session_id: session_id}, msg) do
     IO.puts("[agent:#{agent_id}@#{session_id}] #{msg}")
