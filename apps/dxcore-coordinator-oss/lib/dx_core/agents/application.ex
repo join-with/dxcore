@@ -22,6 +22,7 @@ defmodule DxCore.Agents.Application do
        table_name: :dxcore_oss_task_log_buffer, name: DxCore.Agents.TaskLogBuffer},
       {DynamicSupervisor, name: DxCore.Core.SchedulerSupervisor, strategy: :one_for_one},
       DxCore.Agents.Sessions.Server,
+      DxCore.Agents.PromEx,
       # Start to serve requests, typically the last entry
       DxCore.Agents.Web.Endpoint
     ]

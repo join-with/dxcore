@@ -39,6 +39,9 @@ defmodule DxCore.Agents.Web.Endpoint do
   end
 
   plug Plug.RequestId
+
+  # Prometheus /metrics endpoint, restricted to cluster-internal IPs
+  plug JwObservability.MetricsPlug, prom_ex_module: DxCore.Agents.PromEx
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
   plug Plug.Parsers,
