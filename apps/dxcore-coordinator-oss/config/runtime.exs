@@ -82,11 +82,11 @@ if config_env() == :prod do
   config :dxcore_coordinator_oss, DxCore.Agents.Web.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      # IPv4 bind so pod-to-pod Prometheus scrapes from Alloy succeed in K8s
+      # (Bandit binds :: IPv6-only by default, not dual-stack). Use
+      # {0, 0, 0, 0, 0, 0, 0, 0} only if dual-stack is configured at the
+      # container level.
+      ip: {0, 0, 0, 0},
       port: port
     ],
     secret_key_base: secret_key_base
