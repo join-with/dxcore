@@ -17,7 +17,7 @@ defmodule DxCore.Agents.CLI.MixProject do
   def application do
     [
       mod: {DxCore.Agents.CLI.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger, :ssl]
     ]
   end
 
