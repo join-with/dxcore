@@ -1,5 +1,26 @@
 # @repo/dxcore-agents-cli
 
+## 0.7.4
+
+### Patch Changes
+
+- 9c977ba: CI/CD workflow tuning: bump runner sizes, drop universal github-release tag, remove dead linux-builder-image script.
+  - Bump CI Agent and Release Agent runners to `ubicloud-standard-4`
+  - Remove `github-release` from `dxcore.requirements` in agents-cli and all dxcore action packages
+  - Remove entire `dxcore` block from dxcore-coordinator-oss and dxcore action packages (metadata cleanup)
+  - Delete dead `apps/linux-builder-image/scripts/build-app.sh` script
+  - Refactor cd-deploy.yml to drop detect job and reconcile dev+prod in parallel
+
+- 5db4f07: Fix Logger.Formatter crash on OTP SSL alert messages in Burrito binary.
+  - Add primary Logger filter that wraps SSL `report_cb` callbacks in try/catch
+  - Prevents `:undef` crash on `ssl_alert:own_alert_format/4` (elixir-lang/elixir#14020)
+  - Add `:ssl` to `extra_applications` for explicit dependency
+
+- Updated dependencies [37d1de4]
+- Updated dependencies [8ba6bbe]
+- Updated dependencies [e71c7e1]
+  - @repo/repo-cli@0.6.0
+
 ## 0.7.3
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.4
+
+### Patch Changes
+
+- 8f3e5b1: Add Grafana Alloy DaemonSet for log collection (Loki) and metrics scraping (Mimir). Add prom_ex Prometheus metrics with BEAM, Phoenix, and Ecto plugins to all Phoenix apps via JwObservability.PromEx macro. Secure /metrics endpoint with IP allowlist plug. Add Prometheus scrape annotations to Phoenix pod templates.
+- 9c977ba: CI/CD workflow tuning: bump runner sizes, drop universal github-release tag, remove dead linux-builder-image script.
+  - Bump CI Agent and Release Agent runners to `ubicloud-standard-4`
+  - Remove `github-release` from `dxcore.requirements` in agents-cli and all dxcore action packages
+  - Remove entire `dxcore` block from dxcore-coordinator-oss and dxcore action packages (metadata cleanup)
+  - Delete dead `apps/linux-builder-image/scripts/build-app.sh` script
+  - Refactor cd-deploy.yml to drop detect job and reconcile dev+prod in parallel
+
+- Updated dependencies [37d1de4]
+- Updated dependencies [8ba6bbe]
+- Updated dependencies [e71c7e1]
+  - @repo/repo-cli@0.6.0
+
 ## 0.4.3
 
 ### Patch Changes
