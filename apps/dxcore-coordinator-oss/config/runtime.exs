@@ -27,6 +27,11 @@ config :jw_observability,
   environment: System.get_env("RELEASE_ENV", to_string(config_env())),
   trace_sample_rate: System.get_env("JW_TRACE_SAMPLE_RATE", "1.0")
 
+# PromEx dashboard auto-upload — no-op when GRAFANA_DASHBOARD_* env vars are unset.
+config :dxcore_coordinator_oss,
+       DxCore.Agents.PromEx,
+       JwObservability.PromEx.runtime_config(:dxcore_coordinator_oss)
+
 # OpenTelemetry config — must be in runtime.exs because OTel reads config at boot.
 # When no endpoint is set (dev/test), traces are disabled.
 otlp_endpoint = System.get_env("GRAFANA_CLOUD_OTLP_ENDPOINT")
