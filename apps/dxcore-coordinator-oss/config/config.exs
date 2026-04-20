@@ -35,4 +35,10 @@ config :phoenix, :json_library, Jason
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
+
+# Prometheus metrics on a dedicated HTTP server — separate port from the main
+# Phoenix endpoint, never exposed via ingress. Alloy scrapes pod-to-pod.
+config :dxcore_coordinator_oss, DxCore.Agents.PromEx,
+  metrics_server: [port: 4021, path: "/metrics", protocol: :http]
+
 import_config "#{config_env()}.exs"
