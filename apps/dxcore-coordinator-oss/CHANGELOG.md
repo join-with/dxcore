@@ -1,5 +1,21 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.6
+
+### Patch Changes
+
+- ad48b18: Move Prometheus `/metrics` to a dedicated prom_ex HTTP server on port 4021, separate from the main Phoenix endpoint.
+
+  The metrics port is never exposed via ingress, so external clients can't reach it — eliminating the attack surface that the IP-allowlist + X-Forwarded-For workaround was guarding. This also removes the need for per-app force_ssl exclusions.
+
+  Changes:
+  - Add `metrics_server: [port: 4021, path: "/metrics", protocol: :http]` to each Phoenix app's PromEx config
+  - Remove `plug JwObservability.MetricsPlug` from each app's endpoint.ex
+  - Delete `JwObservability.MetricsPlug` module and its test
+  - Expose port 4021 as a named container port (`metrics`) in the K8s deployment
+  - Point `prometheus.io/port` scrape annotation at 4021
+  - Revert the lingo-place `/metrics` force_ssl exclude from #1868 (moot now)
+
 ## 0.4.5
 
 ### Patch Changes
