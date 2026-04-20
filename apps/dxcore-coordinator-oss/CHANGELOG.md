@@ -1,5 +1,21 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.7
+
+### Patch Changes
+
+- d5e8ba3: Wire prom_ex dashboard auto-upload so default BEAM / Phoenix / Ecto panels reach Grafana on boot.
+
+  Pulumi already injects `GRAFANA_DASHBOARD_URL` and `GRAFANA_DASHBOARD_API_KEY` into Phoenix pods, but nothing read them — so prom_ex never received a `grafana:` config block and the bundled dashboards never uploaded.
+
+  Changes:
+  - Add `JwObservability.PromEx.runtime_config/1` reading the two env vars. Returns `[]` when either is missing so dev/test keep working without credentials.
+  - Call it from each app's `runtime.exs` to merge a `grafana:` entry into the PromEx config alongside the existing `metrics_server:` set in `config.exs`.
+  - Each app uploads to its own Grafana folder (`PromEx / <otp_app>`) to avoid dashboard-title collisions across the six apps sharing one tenant.
+
+- Updated dependencies [448f6dc]
+  - @repo/repo-cli@0.6.2
+
 ## 0.4.6
 
 ### Patch Changes
