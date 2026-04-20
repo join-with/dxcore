@@ -1,5 +1,14 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.4.5
+
+### Patch Changes
+
+- 87f5979: Bind Phoenix endpoints to IPv4 `{0, 0, 0, 0}` instead of IPv6 `::` so pod-to-pod Prometheus scrapes from Alloy succeed. Bandit binds `::` IPv6-only by default (not dual-stack), causing `up=0` on all Alloy scrape targets. Styleguide already had the correct binding — this aligns the rest.
+- Updated dependencies [0bdf827]
+- Updated dependencies [62b343a]
+  - @repo/repo-cli@0.6.1
+
 ## 0.4.4
 
 ### Patch Changes
