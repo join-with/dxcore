@@ -1,5 +1,43 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.1
+
+### Patch Changes
+
+- 8f88bc9: Phase 2 of coordinator durability (#2026): cluster-aware scheduler placement. Schedulers can now be discovered across coordinator pods via `Horde.Registry`, and `Horde.DynamicSupervisor` redistributes them on node loss. Foundation for zero-downtime rolling deploys (Phase 3).
+
+  **`@repo/dxcore-core`**
+  - `Scheduler.start_link/1` accepts new options `:org_id` (required by SaaS, `nil` for OSS) and `:via_module` (defaults to a module read from `:dxcore_core, :scheduler_via_module` config; `Registry` for OSS, `Horde.Registry` for SaaS).
+  - Registry key is now `{org_id, session_id, run_id}` instead of `{session_id, run_id}` so cross-tenant collisions are impossible at the Horde-CRDT level.
+  - `Scheduler.whereis/3` and `Scheduler.list_for_session/2` now take `org_id` as the first argument. The 2-arg / 1-arg backward-compat wrappers were dropped — there is one obvious form, OSS callers pass `nil` explicitly.
+  - `ChannelHelpers` macro reads `socket.assigns[:org_id]` so SaaS sockets scope lookups to the connected org and OSS sockets keep using the `nil` bucket.
+
+  **`@repo/dxcore-coordinator-saas`**
+  - New dependency: `:horde` (~> 0.9). Brings `:delta_crdt`, `:libring`, `:merkle_map` (already locked transitively).
+  - `DxCore.SaaS.Application` swaps the local `Registry` (SchedulerRegistry) for `Horde.Registry` with `members: :auto` and a 100ms CRDT sync interval, and the local `DynamicSupervisor` (SchedulerSupervisor) for `Horde.DynamicSupervisor` with `Horde.UniformDistribution` and `process_redistribution: :active`. `AgentRegistry` stays a local Registry — per-pod presence is correct.
+  - `DNSCluster` added to the supervision tree, queries the headless K8s Service via the `DNS_CLUSTER_QUERY` env var. Defaults to `:ignore` when unset (dev / single-pod CI).
+  - New `rel/env.sh.eex` sets `RELEASE_DISTRIBUTION=name` and `RELEASE_NODE=dxcore@${POD_IP:-127.0.0.1}` for cross-pod connectivity. `POD_IP` is injected by the K8s Downward API in production.
+  - All `DynamicSupervisor.{start_child,terminate_child,which_children}` call-sites in `agent_channel`, `dispatcher_channel`, `admin`, and `sessions` updated to `Horde.DynamicSupervisor`.
+  - `Admin.kill_run/4`, `Admin.terminate_session/3`, `Admin.count_active_schedulers/2`, and `Sessions.terminate_schedulers/3` take `org_id` as the first argument; LiveView callers updated.
+  - Sockets set `socket.assigns.org_id = organization.id` on join so the registry lookup is org-scoped end-to-end.
+
+  **`@repo/dxcore-coordinator-oss`**
+  - OSS coordinator stays single-pod by design and is unchanged in supervision shape, but call-sites updated to the new `Scheduler.whereis/3` and `list_for_session/2` signatures (passing `nil` for `org_id`).
+  - `DxCore.Agents.Scheduler.whereis` defdelegate updated to `whereis/3`.
+
+  **Out of scope (Phase 3)**
+  - `replicas: 2`, `maxSurge`, `maxUnavailable`, PDB, `terminationGracePeriodSeconds`, `preStop` hook
+  - `Release.drain/0` for graceful Horde handoff
+  - `infra-dxcore` deploy strategy
+
+  **Test coverage**
+  - New cross-org isolation test in `dxcore-core` — schedulers in different orgs do not collide on the same `{session_id, run_id}`
+  - All existing 728 SaaS tests, 84 dxcore-core tests, and 116 OSS tests pass
+  - True multi-node `:peer.start_link` integration test deferred to #2035 (needs Ecto sandbox-across-nodes design work)
+
+- Updated dependencies [8f88bc9]
+  - @repo/dxcore-core@0.7.0
+
 ## 0.5.0
 
 ### Minor Changes
