@@ -109,7 +109,7 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
       assert_reply ref, :ok, _
 
       # Verify scheduler is alive and registered
-      pid = Scheduler.whereis(session_id, "test-run")
+      pid = Scheduler.whereis(nil, session_id, "test-run")
       assert pid != nil
       assert Process.alive?(pid)
 
@@ -159,7 +159,7 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
 
       assert_reply ref1, :ok, _
 
-      first_pid = Scheduler.whereis(session_id, "test-run")
+      first_pid = Scheduler.whereis(nil, session_id, "test-run")
       assert first_pid != nil
 
       # Submit again with same run_id - should replace
@@ -171,7 +171,7 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
 
       assert_reply ref2, :ok, _
 
-      second_pid = Scheduler.whereis(session_id, "test-run")
+      second_pid = Scheduler.whereis(nil, session_id, "test-run")
       assert second_pid != nil
       assert second_pid != first_pid
     end
@@ -194,7 +194,7 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
 
       assert_reply ref, :ok, _
 
-      pid = Scheduler.whereis(session_id, "test-run")
+      pid = Scheduler.whereis(nil, session_id, "test-run")
       assert pid != nil
       assert Process.alive?(pid)
 
@@ -205,7 +205,7 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
       Process.sleep(50)
 
       # Verify scheduler is no longer alive
-      assert Scheduler.whereis(session_id, "test-run") == nil
+      assert Scheduler.whereis(nil, session_id, "test-run") == nil
     end
 
     test "handles cancel for non-existent run gracefully", %{socket: socket} do

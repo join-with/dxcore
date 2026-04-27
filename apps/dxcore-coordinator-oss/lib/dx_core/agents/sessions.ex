@@ -63,7 +63,7 @@ defmodule DxCore.Agents.Sessions do
   """
   @spec get_scheduler_pids(binary()) :: [{pid(), binary()}]
   def get_scheduler_pids(session_id) do
-    DxCore.Core.Scheduler.list_for_session(session_id)
+    DxCore.Core.Scheduler.list_for_session(nil, session_id)
   end
 
   @doc """

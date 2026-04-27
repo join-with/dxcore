@@ -39,7 +39,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
   def handle_in("cancel_run", %{"run_id" => run_id}, socket) do
     session_id = socket.assigns.session_id
 
-    case DxCore.Core.Scheduler.whereis(session_id, run_id) do
+    case DxCore.Core.Scheduler.whereis(nil, session_id, run_id) do
       nil ->
         :ok
 
@@ -68,7 +68,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
 
   defp submit_graph(socket, session_id, run_id, graph, failure_strategy) do
     # Stop existing scheduler if any
-    case DxCore.Core.Scheduler.whereis(session_id, run_id) do
+    case DxCore.Core.Scheduler.whereis(nil, session_id, run_id) do
       nil -> :ok
       pid -> DynamicSupervisor.terminate_child(DxCore.Core.SchedulerSupervisor, pid)
     end
@@ -98,7 +98,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
     if total_tasks == 0 do
       # Empty graph — run is already complete, broadcast immediately
       summary =
-        case DxCore.Core.Scheduler.whereis(session_id, run_id) do
+        case DxCore.Core.Scheduler.whereis(nil, session_id, run_id) do
           nil -> DxCore.Core.RunSummary.empty()
           scheduler -> DxCore.Core.Scheduler.summary(scheduler)
         end

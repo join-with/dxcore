@@ -44,8 +44,12 @@ defmodule DxCore.Core.ChannelHelpers do
         session_id = socket.assigns.session_id
         agent_info = socket.assigns.agent_info
         fallback_dispatcher_topic = socket.assigns.dispatcher_topic
+        # OSS sockets do not set `:org_id`; the registry key falls back to
+        # `nil` and matches the OSS bucket. SaaS sockets set the connected
+        # organization's id at join time so the scan stays org-scoped.
+        org_id = socket.assigns[:org_id]
 
-        scheduler_pids = DxCore.Core.Scheduler.list_for_session(session_id)
+        scheduler_pids = DxCore.Core.Scheduler.list_for_session(org_id, session_id)
 
         result =
           Enum.find_value(scheduler_pids, fn {pid, run_id} ->
@@ -110,7 +114,10 @@ defmodule DxCore.Core.ChannelHelpers do
 
           # Notify schedulers of topology change
           for {pid, _run_id} <-
-                DxCore.Core.Scheduler.list_for_session(socket.assigns[:session_id] || "") do
+                DxCore.Core.Scheduler.list_for_session(
+                  socket.assigns[:org_id],
+                  socket.assigns[:session_id] || ""
+                ) do
             DxCore.Core.Scheduler.check_topology(pid)
           end
 

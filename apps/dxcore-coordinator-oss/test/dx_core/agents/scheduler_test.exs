@@ -108,13 +108,13 @@ defmodule DxCore.Agents.SchedulerTest do
     end
   end
 
-  describe "whereis/2" do
+  describe "whereis/3" do
     test "returns the pid of a running scheduler", %{scheduler: pid, session_id: session_id} do
-      assert Scheduler.whereis(session_id, "test-run-1") == pid
+      assert Scheduler.whereis(nil, session_id, "test-run-1") == pid
     end
 
     test "returns nil for a non-existent scheduler" do
-      assert Scheduler.whereis("no-such-session", "no-such-run") == nil
+      assert Scheduler.whereis(nil, "no-such-session", "no-such-run") == nil
     end
   end
 end

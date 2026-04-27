@@ -72,6 +72,16 @@ defmodule DxCore.Core.Scheduler do
 
   @default_registry DxCore.Core.SchedulerRegistry
 
+  # Registry module used for `{:via, _, _}` naming, lookup, and select. Defaults
+  # to the local `Registry` (OSS coordinator). SaaS overrides via
+  # `config :dxcore_core, :scheduler_via_module, Horde.Registry` so the same
+  # process registration works across a Horde-distributed cluster. Tests can
+  # also pass `:via_module` per call to keep using a local Registry without
+  # touching app config.
+  defp default_via_module do
+    Application.get_env(:dxcore_core, :scheduler_via_module, Registry)
+  end
+
   @doc """
   Start the scheduler.
 
@@ -106,7 +116,13 @@ defmodule DxCore.Core.Scheduler do
     skip_expand? = Keyword.get(opts, :skip_expand?, false)
     rehydrate_from = Keyword.get(opts, :rehydrate_from, [])
     registry = Keyword.get(opts, :registry, @default_registry)
-    name = {:via, Registry, {registry, {session_id, run_id}}}
+    via_module = Keyword.get(opts, :via_module, default_via_module())
+    # `org_id` defaults to nil for the OSS coordinator (single-tenant). SaaS
+    # callers pass the connected organization's id so that `{org_id, session_id,
+    # run_id}` is unique even if a malicious tenant manages to match another
+    # tenant's session_id + run_id pair.
+    org_id = Keyword.get(opts, :org_id)
+    name = {:via, via_module, {registry, {org_id, session_id, run_id}}}
 
     GenServer.start_link(
       __MODULE__,
@@ -116,18 +132,35 @@ defmodule DxCore.Core.Scheduler do
     )
   end
 
-  @doc "Look up the pid of a scheduler by session_id and run_id, or nil if not found."
-  def whereis(session_id, run_id, registry \\ @default_registry) do
-    case Registry.lookup(registry, {session_id, run_id}) do
+  @doc """
+  Look up the pid of a scheduler registered under `{org_id, session_id, run_id}`,
+  or nil if not registered. OSS callers (single-tenant) pass `nil` for `org_id`.
+  """
+  def whereis(
+        org_id,
+        session_id,
+        run_id,
+        registry \\ @default_registry,
+        via_module \\ default_via_module()
+      ) do
+    case via_module.lookup(registry, {org_id, session_id, run_id}) do
       [{pid, _}] -> pid
       [] -> nil
     end
   end
 
-  @doc "Return `[{pid, run_id}]` for all schedulers registered under `session_id`."
-  def list_for_session(session_id, registry \\ @default_registry) do
-    Registry.select(registry, [
-      {{{session_id, :"$1"}, :"$2", :_}, [], [{{:"$2", :"$1"}}]}
+  @doc """
+  Return `[{pid, run_id}]` for all schedulers registered under
+  `{org_id, session_id}`. OSS callers pass `nil` for `org_id`.
+  """
+  def list_for_session(
+        org_id,
+        session_id,
+        registry \\ @default_registry,
+        via_module \\ default_via_module()
+      ) do
+    via_module.select(registry, [
+      {{{org_id, session_id, :"$1"}, :"$2", :_}, [], [{{:"$2", :"$1"}}]}
     ])
   end
 

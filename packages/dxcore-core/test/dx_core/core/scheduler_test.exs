@@ -237,13 +237,46 @@ defmodule DxCore.Core.SchedulerTest do
     end
   end
 
-  describe "whereis/2" do
+  describe "whereis/3" do
     test "returns the pid of a running scheduler", %{scheduler: pid, session_id: session_id} do
-      assert Scheduler.whereis(session_id, "test-run-1") == pid
+      assert Scheduler.whereis(nil, session_id, "test-run-1") == pid
     end
 
     test "returns nil for a non-existent scheduler" do
-      assert Scheduler.whereis("no-such-session", "no-such-run") == nil
+      assert Scheduler.whereis(nil, "no-such-session", "no-such-run") == nil
+    end
+  end
+
+  describe "org-scoped registry keys" do
+    test "schedulers in different orgs do not collide on same {session_id, run_id}" do
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_simple.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+
+      shared_session = "shared-session-#{System.unique_integer([:positive])}"
+      shared_run = "shared-run-#{System.unique_integer([:positive])}"
+
+      {:ok, pid_a} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: shared_run,
+          session_id: shared_session,
+          org_id: "org-1",
+          plugin: DxCore.Core.Scheduler.NullPlugin
+        )
+
+      {:ok, pid_b} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: shared_run,
+          session_id: shared_session,
+          org_id: "org-2",
+          plugin: DxCore.Core.Scheduler.NullPlugin
+        )
+
+      assert pid_a != pid_b
+      assert Scheduler.whereis("org-1", shared_session, shared_run) == pid_a
+      assert Scheduler.whereis("org-2", shared_session, shared_run) == pid_b
+      assert Scheduler.whereis(nil, shared_session, shared_run) == nil
     end
   end
 
