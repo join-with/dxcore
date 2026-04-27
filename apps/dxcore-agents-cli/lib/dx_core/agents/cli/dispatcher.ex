@@ -136,7 +136,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def init(config) do
     ws_url = DxCore.Agents.CLI.http_to_ws(config.coordinator_url) <> "/dispatcher/websocket"
 
-    topic = "dispatcher:#{config.org_slug}:#{config.session_id}"
+    # Generate run_id BEFORE connecting so we can use it in the (run-scoped) topic
+    run_id = "run-#{System.system_time(:millisecond)}"
+    topic = "dispatcher:#{config.org_slug}:#{run_id}"
 
     {:ok, client} =
       DxCore.Agents.WsClient.start_link(
@@ -148,8 +150,6 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
     Process.unlink(client)
     ws_monitor = Process.monitor(client)
-
-    run_id = "run-#{System.system_time(:millisecond)}"
 
     state =
       struct!(__MODULE__, %{
@@ -238,6 +238,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
     payload = %{
       "run_id" => state.run_id,
+      "session_id" => state.session_id,
       "tasks" => resolved_tasks,
       "shard_config" => state.shard_config || %{}
     }

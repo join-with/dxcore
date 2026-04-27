@@ -197,6 +197,14 @@ defmodule DxCore.Agents.CLI.AgentTest do
     end
   end
 
+  describe "Agent struct" do
+    test "has :current_run_id field defaulting to nil" do
+      agent = struct!(DxCore.Agents.CLI.Agent, %{})
+      assert Map.has_key?(agent, :current_run_id)
+      assert agent.current_run_id == nil
+    end
+  end
+
   describe "GenServer callbacks" do
     defp base_state(overrides \\ %{}) do
       struct!(
@@ -211,6 +219,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
             adapter: DxCore.Agents.BuildSystem.Turbo,
             current_port: nil,
             current_task_id: nil,
+            current_run_id: nil,
             start_time: nil,
             capabilities: %{
               "cpu_cores" => 4,
@@ -389,11 +398,18 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "build", "command" => "echo hello"}}
+         %{
+           "task_id" => "t1",
+           "run_id" => "r1",
+           "package" => "web",
+           "task" => "build",
+           "command" => "echo hello"
+         }}
 
       assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
       on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
       assert new_state.current_task_id == "t1"
+      assert new_state.current_run_id == "r1"
       assert new_state.current_port != nil
       assert is_integer(new_state.start_time)
     end
@@ -423,16 +439,25 @@ defmodule DxCore.Agents.CLI.AgentTest do
     test "port exit_status pushes task_result and clears port from state" do
       port = open_test_port()
       start_time = System.monotonic_time(:millisecond)
-      state = base_state(%{current_port: port, current_task_id: "t1", start_time: start_time})
+
+      state =
+        base_state(%{
+          current_port: port,
+          current_task_id: "t1",
+          current_run_id: "r1",
+          start_time: start_time
+        })
 
       msg = {port, {:exit_status, 0}}
       assert {:noreply, new_state} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
       assert new_state.current_task_id == nil
+      assert new_state.current_run_id == nil
       assert new_state.start_time == nil
 
       assert_receive {:"$gen_cast", {:push, "task_result", payload}}
       assert payload["task_id"] == "t1"
+      assert payload["run_id"] == "r1"
       assert payload["exit_code"] == 0
       assert is_integer(payload["duration_ms"])
     end
@@ -444,6 +469,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         base_state(%{
           current_port: port,
           current_task_id: "t1",
+          current_run_id: "r1",
           start_time: System.monotonic_time(:millisecond)
         })
 
@@ -452,6 +478,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       assert_receive {:"$gen_cast", {:push, "task_result", payload}}
       assert payload["exit_code"] == 1
+      assert payload["run_id"] == "r1"
     end
 
     test "shutdown with active port closes port and reports interrupted" do
@@ -461,6 +488,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         base_state(%{
           current_port: port,
           current_task_id: "t1",
+          current_run_id: "r1",
           start_time: System.monotonic_time(:millisecond)
         })
 
@@ -469,6 +497,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       assert_receive {:"$gen_cast", {:push, "task_result", payload}}
       assert payload["task_id"] == "t1"
+      assert payload["run_id"] == "r1"
       assert payload["exit_code"] == -1
       assert is_integer(payload["duration_ms"])
     end
@@ -479,7 +508,13 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t2", "package" => "pkg", "task" => "build", "command" => "echo hi"}}
+         %{
+           "task_id" => "t2",
+           "run_id" => "r2",
+           "package" => "pkg",
+           "task" => "build",
+           "command" => "echo hi"
+         }}
 
       assert {:noreply, ^state} = Agent.handle_info(msg, state)
     end
@@ -493,6 +528,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{
            "task_id" => "t1",
+           "run_id" => "r1",
            "package" => "web",
            "task" => "build",
            "command" => "definitely_not_a_real_command_xyz"
@@ -501,10 +537,16 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert {:noreply, new_state} = Agent.handle_info(msg, state)
       assert new_state.current_port == nil
       assert new_state.current_task_id == nil
+      assert new_state.current_run_id == nil
 
       assert_receive {:"$gen_cast",
                       {:push, "task_result",
-                       %{"task_id" => "t1", "exit_code" => -1, "duration_ms" => 0}}}
+                       %{
+                         "task_id" => "t1",
+                         "run_id" => "r1",
+                         "exit_code" => -1,
+                         "duration_ms" => 0
+                       }}}
     end
 
     test "assign_task executes command from payload" do
@@ -514,6 +556,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{
            "task_id" => "t1",
+           "run_id" => "r1",
            "package" => "web",
            "task" => "build",
            "command" => "echo fake-adapter-output"
@@ -535,6 +578,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{
            "task_id" => "t1",
+           "run_id" => "r1",
            "package" => "web",
            "task" => "test",
            "command" => "env",
@@ -557,7 +601,13 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       msg =
         {:channel_message, "agent:s1", "assign_task",
-         %{"task_id" => "t1", "package" => "web", "task" => "test", "command" => "env"}}
+         %{
+           "task_id" => "t1",
+           "run_id" => "r1",
+           "package" => "web",
+           "task" => "test",
+           "command" => "env"
+         }}
 
       assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
       on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
@@ -653,6 +703,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{
            "task_id" => "t1",
+           "run_id" => "r1",
            "package" => "",
            "task" => "build",
            "command" => "echo hello"
@@ -663,7 +714,12 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       assert_receive {:"$gen_cast",
                       {:push, "task_result",
-                       %{"task_id" => "t1", "exit_code" => -1, "duration_ms" => 0}}}
+                       %{
+                         "task_id" => "t1",
+                         "run_id" => "r1",
+                         "exit_code" => -1,
+                         "duration_ms" => 0
+                       }}}
     end
 
     test "assign_task with template overrides payload command" do
@@ -673,6 +729,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         {:channel_message, "agent:s1", "assign_task",
          %{
            "task_id" => "t1",
+           "run_id" => "r1",
            "package" => "web",
            "task" => "build",
            "command" => "echo payload-command"

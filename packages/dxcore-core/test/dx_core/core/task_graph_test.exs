@@ -148,6 +148,36 @@ defmodule DxCore.Core.TaskGraphTest do
     end
   end
 
+  describe "serialize/1" do
+    test "serialize/1 round-trips through parse/1" do
+      json = read_fixture("dry_run_simple.json")
+      {:ok, original} = TaskGraph.parse(json)
+
+      serialized_json = original |> TaskGraph.serialize() |> Jason.encode!()
+      {:ok, round_tripped} = TaskGraph.parse(serialized_json)
+
+      assert MapSet.equal?(
+               MapSet.new(Map.keys(original.tasks)),
+               MapSet.new(Map.keys(round_tripped.tasks))
+             )
+
+      for {id, original_task} <- original.tasks do
+        rt = round_tripped.tasks[id]
+        assert rt.task_id == original_task.task_id
+        assert rt.task == original_task.task
+        assert rt.package == original_task.package
+        assert rt.hash == original_task.hash
+        assert rt.command == original_task.command
+        assert rt.deps == original_task.deps
+        assert rt.dependents == original_task.dependents
+        assert rt.cache_status == original_task.cache_status
+        assert rt.cacheable == original_task.cacheable
+        assert rt.shard == original_task.shard
+        assert rt.requirements == original_task.requirements
+      end
+    end
+  end
+
   describe "parse_shard/1" do
     test "returns nil for nil input" do
       assert TaskGraph.parse_shard(nil) == nil

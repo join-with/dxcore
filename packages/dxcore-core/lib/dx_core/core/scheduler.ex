@@ -73,10 +73,28 @@ defmodule DxCore.Core.Scheduler do
   @default_registry DxCore.Core.SchedulerRegistry
 
   @doc """
-  Start the scheduler with `graph:`, `run_id:`, `session_id:`, `plugin:`,
-  and optional `context:` and `registry:` options.
+  Start the scheduler.
 
-  The `:registry` option defaults to `DxCore.Core.SchedulerRegistry`.
+  Required options:
+  - `:graph` — `%TaskGraph{}` to schedule.
+  - `:run_id` — DB run UUID.
+  - `:session_id` — session identifier (used for Registry naming).
+  - `:plugin` — module implementing `DxCore.Core.SchedulerPlugin`.
+
+  Optional options:
+  - `:context` (default `%{}`) — passed verbatim to plugin callbacks for tenant-scoped metadata.
+  - `:failure_strategy` (default `:fail_fast`) — `:fail_fast` or `:continue_all`.
+  - `:registry` (default `DxCore.Core.SchedulerRegistry`) — Registry used for `{:via, ...}` naming.
+  - `:skip_expand?` (default `false`) — when `true`, the scheduler trusts that `graph` was already
+    expanded by the caller (e.g. `submit_graph` running plugin.expand_graph/2 ahead of persistence).
+    Skipping expansion is required during rehydration so the rebuilt scheduler operates on the
+    same graph the original ran with.
+  - `:rehydrate_from` (default `[]`) — list of result maps with the shape
+    `%{task_id: String.t(), status: :done | :failed | :skipped, agent_id: String.t() | nil,
+       duration_ms: integer() | nil}`. Each entry is applied to the corresponding task in `graph`,
+    setting `status`, `duration_ms`, and `completed_by`. Unknown task_ids (cache flips) are skipped.
+    After applying results, dependents of any `:failed` rehydrated task are marked `:skipped`.
+    When non-empty, the scheduler also assumes topology has settled.
   """
   def start_link(opts) do
     graph = Keyword.fetch!(opts, :graph)
@@ -85,12 +103,15 @@ defmodule DxCore.Core.Scheduler do
     plugin = Keyword.fetch!(opts, :plugin)
     context = Keyword.get(opts, :context, %{})
     failure_strategy = Keyword.get(opts, :failure_strategy, :fail_fast)
+    skip_expand? = Keyword.get(opts, :skip_expand?, false)
+    rehydrate_from = Keyword.get(opts, :rehydrate_from, [])
     registry = Keyword.get(opts, :registry, @default_registry)
     name = {:via, Registry, {registry, {session_id, run_id}}}
 
     GenServer.start_link(
       __MODULE__,
-      {graph, run_id, session_id, plugin, context, failure_strategy},
+      {graph, run_id, session_id, plugin, context, failure_strategy, skip_expand?,
+       rehydrate_from},
       name: name
     )
   end
@@ -125,11 +146,17 @@ defmodule DxCore.Core.Scheduler do
   @doc """
   Report the result of a task execution.
 
-  `result` is `:success` or `:failed`.
-  Returns `{:ok, run_status}` where run_status is `:running`, `:complete`, or `:failed`.
+  `agent_id` must match the agent the task was assigned to (lease holder).
+  `result` is `:success`, `:failed`, `{:success, exit_code}`, or `{:failed, exit_code}`.
+
+  Returns:
+  - `{:ok, run_status}` on success, where run_status is `:running`, `:complete`, or `:failed`.
+  - `{:error, :not_assigned}` if the task is not currently assigned to `agent_id`,
+    or its status is not `:running`.
+  - `{:error, :unknown_task}` if `task_id` does not exist in this scheduler.
   """
-  def report_result(pid, task_id, result) do
-    GenServer.call(pid, {:report_result, task_id, result})
+  def report_result(pid, task_id, agent_id, result) do
+    GenServer.call(pid, {:report_result, task_id, agent_id, result})
   end
 
   @doc "Return any task assigned to `agent_id` back to the frontier."
@@ -140,6 +167,15 @@ defmodule DxCore.Core.Scheduler do
   @doc "Return the current scheduler status."
   def status(pid) do
     GenServer.call(pid, :status)
+  end
+
+  @doc """
+  Return the scheduler's stored `:dispatcher_topic` from its context, or `nil`
+  if not set. Used by channel helpers to broadcast run-scoped events without
+  re-deriving the topic from socket assigns (which may be session-scoped).
+  """
+  def dispatcher_topic(pid) do
+    GenServer.call(pid, :dispatcher_topic)
   end
 
   @doc "Return a structured summary of the run."
@@ -155,35 +191,22 @@ defmodule DxCore.Core.Scheduler do
   # ── Server callbacks ────────────────────────────────────────────────
 
   @impl true
-  def init({%TaskGraph{} = graph, run_id, session_id, plugin, context, failure_strategy}) do
-    # Let the plugin expand the graph before scheduling
-    %TaskGraph{tasks: graph_tasks} = plugin.expand_graph(graph, context)
+  def init(
+        {%TaskGraph{} = graph, run_id, session_id, plugin, context, failure_strategy,
+         skip_expand?, rehydrate_from}
+      ) do
+    # Let the plugin expand the graph before scheduling, unless caller already did so
+    graph =
+      if skip_expand? do
+        graph
+      else
+        plugin.expand_graph(graph, context)
+      end
 
-    # Build TaskState entries from graph tasks
     tasks =
-      Map.new(graph_tasks, fn {id, t} ->
-        {id,
-         %TaskState{
-           task_id: t.task_id,
-           task: t.task,
-           package: t.package,
-           hash: t.hash,
-           command: t.command,
-           deps: t.deps,
-           dependents: t.dependents,
-           shard: t.shard,
-           requirements: t.requirements,
-           status: if(t.cache_status == :hit, do: :done, else: :pending),
-           assigned_to: nil,
-           completed_by: nil,
-           run_id: run_id,
-           agent_info: nil,
-           started_at_mono: nil,
-           exit_code: nil,
-           duration_ms: nil,
-           cache_status: t.cache_status
-         }}
-      end)
+      graph
+      |> build_initial_tasks(run_id)
+      |> apply_rehydration(rehydrate_from, failure_strategy)
 
     frontier = compute_frontier(tasks)
 
@@ -196,11 +219,16 @@ defmodule DxCore.Core.Scheduler do
       agents: %{},
       frontier: frontier,
       failure_strategy: failure_strategy,
-      failed_fast: false,
+      failed_fast: failed_fast_from_results(rehydrate_from, failure_strategy),
       topology_check: Map.get(context, :topology_check, "infer"),
       expected_agents: get_in(context, [:topology, "agents"]),
       topology_timer: nil,
-      topology_settled: false
+      # Rehydrated runs assume topology has already settled — fresh submits
+      # don't pass rehydrate_from and still use the live topology timer.
+      # The agent channel always passes a non-empty rehydrate_from list
+      # (the incoming result is baked in), so this branch is reached
+      # whenever we rebuild a scheduler post-restart.
+      topology_settled: rehydrate_from != []
     }
 
     {:ok, state}
@@ -241,107 +269,104 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
-  def handle_call({:report_result, task_id, {result_atom, exit_code}}, from, state)
+  def handle_call({:report_result, task_id, agent_id, {result_atom, exit_code}}, from, state)
       when result_atom in [:success, :failed] do
-    case Map.fetch(state.tasks, task_id) do
-      :error ->
-        {:reply, {:error, :unknown_task}, state}
-
-      {:ok, task_state} ->
-        duration_ms = compute_duration(task_state)
-        updated_task = %{task_state | exit_code: exit_code, duration_ms: duration_ms}
-        state = %{state | tasks: Map.put(state.tasks, task_id, updated_task)}
-        handle_call({:report_result, task_id, result_atom}, from, state)
+    with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
+           Map.fetch(state.tasks, task_id) do
+      duration_ms = compute_duration(task_state)
+      updated_task = %{task_state | exit_code: exit_code, duration_ms: duration_ms}
+      state = %{state | tasks: Map.put(state.tasks, task_id, updated_task)}
+      handle_call({:report_result, task_id, agent_id, result_atom}, from, state)
+    else
+      result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
 
   @impl true
-  def handle_call({:report_result, task_id, :success}, _from, state) do
-    case Map.fetch(state.tasks, task_id) do
-      :error ->
-        {:reply, {:error, :unknown_task}, state}
+  def handle_call({:report_result, task_id, agent_id, :success}, _from, state) do
+    with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
+           Map.fetch(state.tasks, task_id) do
+      duration_ms = task_state.duration_ms || compute_duration(task_state)
 
-      {:ok, task_state} ->
-        duration_ms = task_state.duration_ms || compute_duration(task_state)
+      updated_task = %{
+        task_state
+        | status: :done,
+          assigned_to: nil,
+          completed_by: task_state.assigned_to,
+          duration_ms: duration_ms
+      }
 
-        updated_task = %{
-          task_state
-          | status: :done,
-            assigned_to: nil,
-            completed_by: task_state.assigned_to,
-            duration_ms: duration_ms
-        }
+      tasks = Map.put(state.tasks, task_id, updated_task)
 
-        tasks = Map.put(state.tasks, task_id, updated_task)
+      # Free the agent
+      agents =
+        case task_state.assigned_to do
+          nil -> state.agents
+          aid -> Map.delete(state.agents, aid)
+        end
 
-        # Free the agent
-        agents =
-          case task_state.assigned_to do
-            nil -> state.agents
-            aid -> Map.delete(state.agents, aid)
-          end
+      # Recompute frontier with the newly completed task
+      frontier = compute_frontier(tasks)
+      new_state = %{state | tasks: tasks, agents: agents, frontier: frontier}
 
-        # Recompute frontier with the newly completed task
-        frontier = compute_frontier(tasks)
-        new_state = %{state | tasks: tasks, agents: agents, frontier: frontier}
+      # Notify plugin of task completion (wrapped in try/catch for resilience)
+      notify_plugin_task_complete(state, task_state, :success)
 
-        # Notify plugin of task completion (wrapped in try/catch for resilience)
-        notify_plugin_task_complete(state, task_state, :success)
-
-        {:reply, {:ok, compute_run_status(tasks, state.failed_fast)}, new_state}
+      {:reply, {:ok, compute_run_status(tasks, state.failed_fast)}, new_state}
+    else
+      result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
 
   @impl true
-  def handle_call({:report_result, task_id, :failed}, _from, state) do
-    case Map.fetch(state.tasks, task_id) do
-      :error ->
-        {:reply, {:error, :unknown_task}, state}
+  def handle_call({:report_result, task_id, agent_id, :failed}, _from, state) do
+    with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
+           Map.fetch(state.tasks, task_id) do
+      duration_ms = task_state.duration_ms || compute_duration(task_state)
 
-      {:ok, task_state} ->
-        duration_ms = task_state.duration_ms || compute_duration(task_state)
+      updated_task = %{
+        task_state
+        | status: :failed,
+          assigned_to: nil,
+          completed_by: task_state.assigned_to,
+          duration_ms: duration_ms
+      }
 
-        updated_task = %{
-          task_state
-          | status: :failed,
-            assigned_to: nil,
-            completed_by: task_state.assigned_to,
-            duration_ms: duration_ms
-        }
+      tasks = Map.put(state.tasks, task_id, updated_task)
 
-        tasks = Map.put(state.tasks, task_id, updated_task)
+      # Apply failure strategy
+      tasks =
+        case state.failure_strategy do
+          :continue_all -> propagate_skipped(tasks, task_state.dependents)
+          :fail_fast -> skip_all_pending(tasks)
+        end
 
-        # Apply failure strategy
-        tasks =
-          case state.failure_strategy do
-            :continue_all -> propagate_skipped(tasks, task_state.dependents)
-            :fail_fast -> skip_all_pending(tasks)
-          end
+      failed_fast = state.failed_fast || state.failure_strategy == :fail_fast
 
-        failed_fast = state.failed_fast || state.failure_strategy == :fail_fast
+      # Free the agent
+      agents =
+        case task_state.assigned_to do
+          nil -> state.agents
+          aid -> Map.delete(state.agents, aid)
+        end
 
-        # Free the agent
-        agents =
-          case task_state.assigned_to do
-            nil -> state.agents
-            aid -> Map.delete(state.agents, aid)
-          end
+      # Recompute frontier (may be empty after failure propagation)
+      frontier = compute_frontier(tasks)
 
-        # Recompute frontier (may be empty after failure propagation)
-        frontier = compute_frontier(tasks)
+      new_state = %{
+        state
+        | tasks: tasks,
+          agents: agents,
+          frontier: frontier,
+          failed_fast: failed_fast
+      }
 
-        new_state = %{
-          state
-          | tasks: tasks,
-            agents: agents,
-            frontier: frontier,
-            failed_fast: failed_fast
-        }
+      # Notify plugin of task completion (wrapped in try/catch for resilience)
+      notify_plugin_task_complete(state, task_state, :failed)
 
-        # Notify plugin of task completion (wrapped in try/catch for resilience)
-        notify_plugin_task_complete(state, task_state, :failed)
-
-        {:reply, {:ok, compute_run_status(tasks, failed_fast)}, new_state}
+      {:reply, {:ok, compute_run_status(tasks, failed_fast)}, new_state}
+    else
+      result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
 
@@ -388,6 +413,11 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
+  def handle_call(:dispatcher_topic, _from, state) do
+    {:reply, Map.get(state.context, :dispatcher_topic), state}
+  end
+
+  @impl true
   def handle_cast(:check_topology, state) do
     alias DxCore.Core.Scheduler.TopologyEvaluator
     {:noreply, TopologyEvaluator.evaluate(state)}
@@ -406,6 +436,37 @@ defmodule DxCore.Core.Scheduler do
 
   defp compute_duration(%{started_at_mono: started}),
     do: System.monotonic_time(:millisecond) - started
+
+  defp reply_ack_rejection({:ok, %TaskState{} = t}, state, agent_id, task_id) do
+    log_and_emit_ack_rejected(agent_id, task_id, state.run_id, :wrong_agent_or_status, t)
+    {:reply, {:error, :not_assigned}, state}
+  end
+
+  defp reply_ack_rejection(:error, state, agent_id, task_id) do
+    log_and_emit_ack_rejected(agent_id, task_id, state.run_id, :unknown_task, nil)
+    {:reply, {:error, :unknown_task}, state}
+  end
+
+  defp log_and_emit_ack_rejected(agent_id, task_id, run_id, reason, task) do
+    log_msg =
+      case task do
+        %TaskState{} = t ->
+          "ACK rejected: agent=#{inspect(agent_id)} task=#{task_id} run=#{run_id} " <>
+            "(actual assigned_to=#{inspect(t.assigned_to)}, status=#{t.status})"
+
+        nil ->
+          "ACK rejected: agent=#{inspect(agent_id)} task=#{task_id} run=#{run_id} " <>
+            "(unknown task)"
+      end
+
+    Logger.warning(log_msg)
+
+    :telemetry.execute(
+      [:dxcore, :scheduler, :ack_rejected],
+      %{count: 1},
+      %{agent_id: agent_id, task_id: task_id, run_id: run_id, reason: reason}
+    )
+  end
 
   defp notify_plugin_task_complete(state, task_state, result) do
     duration_ms =
@@ -428,6 +489,87 @@ defmodule DxCore.Core.Scheduler do
         :ok
     end
   end
+
+  defp build_initial_tasks(%TaskGraph{tasks: graph_tasks}, run_id) do
+    Map.new(graph_tasks, fn {id, t} ->
+      {id,
+       %TaskState{
+         task_id: t.task_id,
+         task: t.task,
+         package: t.package,
+         hash: t.hash,
+         command: t.command,
+         deps: t.deps,
+         dependents: t.dependents,
+         shard: t.shard,
+         requirements: t.requirements,
+         status: if(t.cache_status == :hit, do: :done, else: :pending),
+         assigned_to: nil,
+         completed_by: nil,
+         run_id: run_id,
+         agent_info: nil,
+         started_at_mono: nil,
+         exit_code: nil,
+         duration_ms: nil,
+         cache_status: t.cache_status
+       }}
+    end)
+  end
+
+  defp apply_rehydration(tasks, [], _failure_strategy), do: tasks
+
+  defp apply_rehydration(tasks, results, failure_strategy) do
+    tasks =
+      Enum.reduce(results, tasks, fn r, acc ->
+        case Map.fetch(acc, r.task_id) do
+          # task no longer in graph (e.g. cache flip), skip
+          :error ->
+            acc
+
+          {:ok, task} ->
+            Map.put(acc, r.task_id, %{
+              task
+              | status: r.status,
+                duration_ms: r.duration_ms,
+                completed_by: r.agent_id,
+                assigned_to: nil
+            })
+        end
+      end)
+
+    case failure_strategy do
+      :fail_fast ->
+        # Mirror the live :fail_fast path: a single failure short-circuits the
+        # entire run by skipping every still-pending task, regardless of
+        # dependency. propagate_rehydrated_failures only handles dependents,
+        # which would leave independent tasks runnable on the rehydrated
+        # scheduler.
+        if Enum.any?(results, &(&1.status == :failed)) do
+          skip_all_pending(tasks)
+        else
+          tasks
+        end
+
+      _ ->
+        propagate_rehydrated_failures(tasks)
+    end
+  end
+
+  defp propagate_rehydrated_failures(tasks) do
+    failed_dependents =
+      tasks
+      |> Enum.filter(fn {_id, t} -> t.status == :failed end)
+      |> Enum.flat_map(fn {_id, t} -> t.dependents end)
+
+    Enum.reduce(failed_dependents, tasks, fn dep_id, acc ->
+      propagate_skipped(acc, [dep_id])
+    end)
+  end
+
+  defp failed_fast_from_results(results, :fail_fast),
+    do: Enum.any?(results, &(&1.status == :failed))
+
+  defp failed_fast_from_results(_, _), do: false
 
   defp compute_frontier(tasks) do
     tasks

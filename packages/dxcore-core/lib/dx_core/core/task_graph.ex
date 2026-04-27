@@ -57,6 +57,32 @@ defmodule DxCore.Core.TaskGraph do
   end
 
   @doc """
+  Serializes a `%TaskGraph{}` into a JSON-compatible map matching the wire
+  format consumed by `parse/1`. Used to persist the post-expansion graph for
+  durability rehydration.
+  """
+  def serialize(%__MODULE__{tasks: tasks}) do
+    %{
+      "tasks" =>
+        Enum.map(tasks, fn {_id, t} ->
+          %{
+            "taskId" => t.task_id,
+            "task" => t.task,
+            "package" => t.package,
+            "hash" => t.hash,
+            "command" => t.command,
+            "dependencies" => t.deps,
+            "dependents" => t.dependents,
+            "cache" => %{"status" => if(t.cache_status == :hit, do: "HIT", else: "MISS")},
+            "cacheable" => t.cacheable,
+            "shard" => t.shard,
+            "requirements" => t.requirements
+          }
+        end)
+    }
+  end
+
+  @doc """
   Parses a shard descriptor into `%{index: integer, count: integer}`.
 
   Accepts:

@@ -81,12 +81,12 @@ defmodule DxCore.Core.SchedulerTest do
     end
   end
 
-  describe "report_result/3" do
+  describe "report_result/4" do
     test "completing a task unblocks dependents", %{scheduler: pid} do
       {:ok, task} = Scheduler.request_task(pid, "agent-1")
       assert task.task_id == "@repo/ui#build"
 
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       {:ok, task2} = Scheduler.request_task(pid, "agent-1")
       assert task2.task_id in ["admin#build", "api#build"]
@@ -98,7 +98,7 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "failing a task propagates failure to dependents", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["admin#build"].status == :skipped
@@ -107,28 +107,115 @@ defmodule DxCore.Core.SchedulerTest do
     end
   end
 
+  describe "report_result strict ACK rule" do
+    test "accepts when assigned_to matches agent_id and status is running", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      assert {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+    end
+
+    test "rejects when reporting agent != assigned agent", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+
+      assert {:error, :not_assigned} =
+               Scheduler.report_result(pid, "@repo/ui#build", "agent-2", :success)
+    end
+
+    test "rejects when task is :pending with no assignment", %{scheduler: pid} do
+      # Don't request first
+      assert {:error, :not_assigned} =
+               Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+    end
+
+    test "rejects when task is already :done", %{scheduler: pid} do
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+
+      assert {:error, :not_assigned} =
+               Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+    end
+
+    test "rejects unknown task_id", %{scheduler: pid} do
+      assert {:error, :unknown_task} =
+               Scheduler.report_result(pid, "nonexistent", "agent-1", :success)
+    end
+  end
+
+  describe "telemetry events" do
+    test "report_result emits :ack_rejected on wrong agent", %{scheduler: pid} do
+      test_pid = self()
+      handler_id = "ack-rejected-test-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:dxcore, :scheduler, :ack_rejected],
+        fn _event, measurements, metadata, _config ->
+          send(test_pid, {:ack_rejected, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      {:ok, _} = Scheduler.request_task(pid, "agent-1")
+
+      assert {:error, :not_assigned} =
+               Scheduler.report_result(pid, "@repo/ui#build", "wrong-agent", :success)
+
+      assert_receive {:ack_rejected, %{count: 1},
+                      %{
+                        agent_id: "wrong-agent",
+                        task_id: "@repo/ui#build",
+                        reason: :wrong_agent_or_status
+                      }},
+                     500
+    end
+
+    test "report_result emits :ack_rejected on unknown task", %{scheduler: pid} do
+      test_pid = self()
+      handler_id = "unknown-task-test-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:dxcore, :scheduler, :ack_rejected],
+        fn _event, measurements, metadata, _config ->
+          send(test_pid, {:ack_rejected, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert {:error, :unknown_task} =
+               Scheduler.report_result(pid, "nonexistent", "agent-1", :success)
+
+      assert_receive {:ack_rejected, %{count: 1},
+                      %{agent_id: "agent-1", task_id: "nonexistent", reason: :unknown_task}},
+                     500
+    end
+  end
+
   describe "report_result returns run_status atomically" do
     test "returns :running while tasks remain", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
     end
 
     test "returns :complete when last task succeeds", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+
+      {:ok, t2} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t3} = Scheduler.request_task(pid, "agent-2")
+      {:ok, :running} = Scheduler.report_result(pid, t2.task_id, "agent-1", :success)
+      {:ok, :running} = Scheduler.report_result(pid, t3.task_id, "agent-2", :success)
 
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
-      {:ok, :running} = Scheduler.report_result(pid, "admin#build", :success)
-      {:ok, :running} = Scheduler.report_result(pid, "api#build", :success)
-
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", :success)
+      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", "agent-1", :success)
     end
 
     test "returns :failed when failure propagates to all remaining tasks", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
+      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :failed)
     end
   end
 
@@ -175,7 +262,7 @@ defmodule DxCore.Core.SchedulerTest do
 
       # First task is shared#build (no shard, only frontier task)
       {:ok, _} = Scheduler.request_task(pid, "a1")
-      {:ok, :running} = Scheduler.report_result(pid, "shared#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "shared#build", "a1", :success)
 
       # After completing shared#build, both sharded tasks are in the frontier
       {:ok, task} = Scheduler.request_task(pid, "a1")
@@ -230,7 +317,7 @@ defmodule DxCore.Core.SchedulerTest do
         )
 
       {:ok, _task} = Scheduler.request_task(pid, "agent-1", agent_info)
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       assert_receive {:on_task_complete, "@repo/ui#build", :success, duration_ms, received_agent}
       assert is_integer(duration_ms)
@@ -252,7 +339,7 @@ defmodule DxCore.Core.SchedulerTest do
         )
 
       {:ok, _task} = Scheduler.request_task(pid, "agent-1", agent_info)
-      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
+      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :failed)
 
       assert_receive {:on_task_complete, "@repo/ui#build", :failed, duration_ms, received_agent}
       assert is_integer(duration_ms)
@@ -270,7 +357,7 @@ defmodule DxCore.Core.SchedulerTest do
 
       {:ok, _task} = Scheduler.request_task(pid, "agent-1")
       # Should not crash the scheduler
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       # Scheduler should still be alive and functional
       assert Process.alive?(pid)
@@ -290,7 +377,7 @@ defmodule DxCore.Core.SchedulerTest do
         )
 
       {:ok, _task} = Scheduler.request_task(pid, "agent-1", %AgentInfo{agent_id: "a1"})
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       assert_receive {:on_task_complete, "@repo/ui#build", :success, _duration_ms, _agent}
     end
@@ -315,7 +402,7 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "marks pending dependents as :skipped, not :failed", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _run_status} = Scheduler.report_result(pid, "pkg#lint", :failed)
+      {:ok, _run_status} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["pkg#lint"].status == :failed
@@ -326,12 +413,15 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "continues independent tasks when a branch fails", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :success)
 
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+      {:ok, t1} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t2} = Scheduler.request_task(pid, "agent-2")
 
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+      build_agent = if t1.task_id == "pkg#build", do: "agent-1", else: "agent-2"
+      _test_agent = if t2.task_id == "pkg#test", do: "agent-2", else: "agent-1"
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", build_agent, :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["pkg#build"].status == :failed
@@ -341,26 +431,31 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "run resolves to :failed after all independent tasks complete", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :success)
 
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+      {:ok, t1} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t2} = Scheduler.request_task(pid, "agent-2")
+
+      build_agent = if t1.task_id == "pkg#build", do: "agent-1", else: "agent-2"
+      test_agent = if t2.task_id == "pkg#test", do: "agent-2", else: "agent-1"
 
       # Fail build, test still running
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", build_agent, :failed)
 
       # Complete test — deploy is skipped (depends on failed build), run is failed
-      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", :success)
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", test_agent, :success)
     end
 
     test "only skips :pending dependents, not :running ones", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :success)
 
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+      {:ok, t1} = Scheduler.request_task(pid, "agent-1")
+      {:ok, _t2} = Scheduler.request_task(pid, "agent-2")
 
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+      build_agent = if t1.task_id == "pkg#build", do: "agent-1", else: "agent-2"
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", build_agent, :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["pkg#test"].status == :running
@@ -386,7 +481,7 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "skips all pending tasks on first failure", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", :failed)
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["pkg#lint"].status == :failed
@@ -397,12 +492,15 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "waits for running tasks to complete before declaring failed", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :success)
 
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
+      {:ok, t1} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t2} = Scheduler.request_task(pid, "agent-2")
 
-      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", :failed)
+      build_agent = if t1.task_id == "pkg#build", do: "agent-1", else: "agent-2"
+      test_agent = if t2.task_id == "pkg#test", do: "agent-2", else: "agent-1"
+
+      {:ok, :running} = Scheduler.report_result(pid, "pkg#build", build_agent, :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["pkg#test"].status == :running
@@ -410,12 +508,12 @@ defmodule DxCore.Core.SchedulerTest do
 
       assert :no_task = Scheduler.request_task(pid, "agent-1")
 
-      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", :success)
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#test", test_agent, :success)
     end
 
     test "does not assign new tasks after fail_fast triggered", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", :failed)
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", "agent-1", :failed)
 
       assert :no_task = Scheduler.request_task(pid, "agent-1")
     end
@@ -424,7 +522,7 @@ defmodule DxCore.Core.SchedulerTest do
   describe "report_result with exit_code" do
     test "stores exit_code on TaskState when tuple result provided", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", {:success, 0})
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", {:success, 0})
 
       status = Scheduler.status(pid)
       assert status.tasks["@repo/ui#build"].exit_code == 0
@@ -432,7 +530,7 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "stores exit_code on failed result", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", {:failed, 1})
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", {:failed, 1})
 
       status = Scheduler.status(pid)
       assert status.tasks["@repo/ui#build"].exit_code == 1
@@ -440,7 +538,7 @@ defmodule DxCore.Core.SchedulerTest do
 
     test "bare :success/:failed atoms still work (backward compat)", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       status = Scheduler.status(pid)
       assert status.tasks["@repo/ui#build"].exit_code == nil
@@ -451,7 +549,7 @@ defmodule DxCore.Core.SchedulerTest do
     test "duration_ms is computed and stored on report_result", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
       Process.sleep(5)
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       status = Scheduler.status(pid)
       assert status.tasks["@repo/ui#build"].duration_ms >= 5
@@ -532,7 +630,7 @@ defmodule DxCore.Core.SchedulerTest do
   describe "completed_by" do
     test "preserves agent_id after task completion", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       status = Scheduler.status(pid)
       assert status.tasks["@repo/ui#build"].assigned_to == nil
@@ -540,18 +638,221 @@ defmodule DxCore.Core.SchedulerTest do
     end
   end
 
+  describe "rehydration" do
+    defp build_graph_for_rehydration do
+      # Three tasks: a → b, a → c
+      %TaskGraph{
+        tasks: %{
+          "a" => %TaskGraph.Task{
+            task_id: "a",
+            task: "test",
+            package: "pkg",
+            hash: "h",
+            command: "true",
+            deps: [],
+            dependents: ["b", "c"],
+            cache_status: :miss,
+            cacheable: true,
+            shard: nil
+          },
+          "b" => %TaskGraph.Task{
+            task_id: "b",
+            task: "test",
+            package: "pkg",
+            hash: "h",
+            command: "true",
+            deps: ["a"],
+            dependents: [],
+            cache_status: :miss,
+            cacheable: true,
+            shard: nil
+          },
+          "c" => %TaskGraph.Task{
+            task_id: "c",
+            task: "test",
+            package: "pkg",
+            hash: "h",
+            command: "true",
+            deps: ["a"],
+            dependents: [],
+            cache_status: :miss,
+            cacheable: true,
+            shard: nil
+          }
+        }
+      }
+    end
+
+    test "init with rehydrate_from reconstructs state equivalent to a normal init that processed the same results" do
+      graph = build_graph_for_rehydration()
+
+      # Normal scheduler: process result for "a"
+      {:ok, normal_pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r1",
+          session_id: "rehydrate-sess",
+          plugin: DxCore.Core.Scheduler.NullPlugin
+        )
+
+      {:ok, _} = Scheduler.request_task(normal_pid, "agent-1")
+      {:ok, _} = Scheduler.report_result(normal_pid, "a", "agent-1", :success)
+
+      # Rehydrated scheduler: pass the same result via rehydrate_from
+      results = [
+        %{task_id: "a", status: :done, agent_id: "agent-1", duration_ms: 5}
+      ]
+
+      {:ok, rehydrated_pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r2",
+          session_id: "rehydrate-sess",
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          skip_expand?: true,
+          rehydrate_from: results
+        )
+
+      norm = Scheduler.status(normal_pid)
+      rehy = Scheduler.status(rehydrated_pid)
+
+      assert norm.tasks["a"].status == :done
+      assert rehy.tasks["a"].status == :done
+      assert norm.tasks["a"].status == rehy.tasks["a"].status
+      assert MapSet.equal?(norm.frontier, rehy.frontier)
+
+      # Rehydration must populate completed_by and duration_ms from the result map,
+      # regardless of how the normal scheduler computed them.
+      assert rehy.tasks["a"].completed_by == "agent-1"
+      assert rehy.tasks["a"].duration_ms == 5
+    end
+
+    test "rehydrate_from skips task_ids no longer in the graph" do
+      graph = build_graph_for_rehydration()
+
+      # Result references task "z" which is NOT in graph (e.g. cache flip)
+      results = [%{task_id: "z", status: :done, agent_id: "agent-1", duration_ms: 5}]
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r3",
+          session_id: "rehydrate-sess-2",
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          skip_expand?: true,
+          rehydrate_from: results
+        )
+
+      status = Scheduler.status(pid)
+      refute Map.has_key?(status.tasks, "z")
+      # All tasks remain in their initial states (a frontier, b/c blocked)
+      assert status.tasks["a"].status == :pending
+    end
+
+    test "rehydrate_from with a failed task propagates skipped status to dependents" do
+      graph = build_graph_for_rehydration()
+
+      results = [%{task_id: "a", status: :failed, agent_id: "agent-1", duration_ms: 5}]
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r4",
+          session_id: "rehydrate-sess-3",
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :continue_all,
+          skip_expand?: true,
+          rehydrate_from: results
+        )
+
+      status = Scheduler.status(pid)
+      assert status.tasks["a"].status == :failed
+      assert status.tasks["b"].status == :skipped
+      assert status.tasks["c"].status == :skipped
+    end
+
+    test "rehydrate_from with a failed task seeds failed_fast under :fail_fast strategy" do
+      graph = build_graph_for_rehydration()
+
+      results = [%{task_id: "a", status: :failed, agent_id: "agent-1", duration_ms: 5}]
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r5",
+          session_id: "rehydrate-sess-4",
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :fail_fast,
+          skip_expand?: true,
+          rehydrate_from: results
+        )
+
+      status = Scheduler.status(pid)
+      assert status.tasks["a"].status == :failed
+      assert status.run_status == :failed
+    end
+
+    test ":fail_fast rehydration skips independent pending tasks (C1)" do
+      # Graph: a → b/c, plus independent leaf d.
+      # Under :fail_fast, a failure must skip *every* pending task — not just
+      # transitive dependents — to mirror the live failure path.
+      graph = %TaskGraph{
+        tasks:
+          Map.put(build_graph_for_rehydration().tasks, "d", %TaskGraph.Task{
+            task_id: "d",
+            task: "test",
+            package: "pkg",
+            hash: "h",
+            command: "true",
+            deps: [],
+            dependents: [],
+            cache_status: :miss,
+            cacheable: true,
+            shard: nil
+          })
+      }
+
+      results = [%{task_id: "a", status: :failed, agent_id: "agent-1", duration_ms: 5}]
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "r-c1",
+          session_id: "rehydrate-sess-c1",
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :fail_fast,
+          skip_expand?: true,
+          rehydrate_from: results
+        )
+
+      status = Scheduler.status(pid)
+      assert status.tasks["a"].status == :failed
+      assert status.tasks["b"].status == :skipped
+      assert status.tasks["c"].status == :skipped
+      # The original bug: independent task `d` stayed :pending under fail_fast.
+      assert status.tasks["d"].status == :skipped
+      assert status.run_status == :failed
+    end
+  end
+
   describe "summary/1" do
     test "returns structured summary after successful run", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", {:success, 0})
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", {:success, 0})
+
+      {:ok, t2} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t3} = Scheduler.request_task(pid, "agent-2")
+
+      admin_agent = if t2.task_id == "admin#build", do: "agent-1", else: "agent-2"
+      api_agent = if t2.task_id == "api#build", do: "agent-1", else: "agent-2"
+
+      {:ok, :running} = Scheduler.report_result(pid, "admin#build", admin_agent, {:success, 0})
+      {:ok, :running} = Scheduler.report_result(pid, "api#build", api_agent, {:success, 0})
+
+      _ = t3
 
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
-      {:ok, :running} = Scheduler.report_result(pid, "admin#build", {:success, 0})
-      {:ok, :running} = Scheduler.report_result(pid, "api#build", {:success, 0})
-
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", {:success, 0})
+      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", "agent-1", {:success, 0})
 
       summary = Scheduler.summary(pid)
       assert summary.status == :complete
@@ -577,7 +878,7 @@ defmodule DxCore.Core.SchedulerTest do
         )
 
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", {:failed, 1})
+      {:ok, :failed} = Scheduler.report_result(pid, "pkg#lint", "agent-1", {:failed, 1})
 
       summary = Scheduler.summary(pid)
       assert summary.status == :failed

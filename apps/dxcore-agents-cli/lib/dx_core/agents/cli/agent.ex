@@ -30,6 +30,7 @@ defmodule DxCore.Agents.CLI.Agent do
     :adapter,
     :current_port,
     :current_task_id,
+    :current_run_id,
     :start_time,
     :capabilities,
     :command_template,
@@ -144,7 +145,7 @@ defmodule DxCore.Agents.CLI.Agent do
       log(state, "Warning: task already in progress, ignoring")
       {:noreply, state}
     else
-      %{"task_id" => task_id} = payload
+      %{"task_id" => task_id, "run_id" => run_id} = payload
       shard = payload["shard"]
       log(state, "Executing task #{task_id}")
 
@@ -157,6 +158,7 @@ defmodule DxCore.Agents.CLI.Agent do
               state
               | current_port: port,
                 current_task_id: task_id,
+                current_run_id: run_id,
                 start_time: System.monotonic_time(:millisecond)
             }
 
@@ -167,6 +169,7 @@ defmodule DxCore.Agents.CLI.Agent do
 
               DxCore.Agents.WsClient.push(state.client, "task_result", %{
                 "task_id" => task_id,
+                "run_id" => run_id,
                 "exit_code" => -1,
                 "duration_ms" => 0
               })
@@ -179,6 +182,7 @@ defmodule DxCore.Agents.CLI.Agent do
 
           DxCore.Agents.WsClient.push(state.client, "task_result", %{
             "task_id" => task_id,
+            "run_id" => run_id,
             "exit_code" => -1,
             "duration_ms" => 0
           })
@@ -205,11 +209,19 @@ defmodule DxCore.Agents.CLI.Agent do
 
     DxCore.Agents.WsClient.push(state.client, "task_result", %{
       "task_id" => state.current_task_id,
+      "run_id" => state.current_run_id,
       "exit_code" => exit_code,
       "duration_ms" => duration_ms
     })
 
-    new_state = %{state | current_port: nil, current_task_id: nil, start_time: nil}
+    new_state = %{
+      state
+      | current_port: nil,
+        current_task_id: nil,
+        current_run_id: nil,
+        start_time: nil
+    }
+
     {:noreply, new_state}
   end
 
@@ -223,6 +235,7 @@ defmodule DxCore.Agents.CLI.Agent do
 
       DxCore.Agents.WsClient.push(state.client, "task_result", %{
         "task_id" => state.current_task_id,
+        "run_id" => state.current_run_id,
         "exit_code" => -1,
         "duration_ms" => duration_ms
       })

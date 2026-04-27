@@ -70,7 +70,8 @@ defmodule DxCore.Agents.Web.AgentChannel do
     run_id = socket.assigns[:current_run_id]
     session_id = socket.assigns.session_id
 
-    {:ok, run_status} = Scheduler.report_result(scheduler, task_id, result)
+    {:ok, run_status} =
+      Scheduler.report_result(scheduler, task_id, socket.assigns[:agent_id], result)
 
     @endpoint.broadcast!(socket.assigns.dispatcher_topic, "task_completed", %{
       "task_id" => task_id,

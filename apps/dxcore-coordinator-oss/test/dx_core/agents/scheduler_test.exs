@@ -39,12 +39,12 @@ defmodule DxCore.Agents.SchedulerTest do
     end
   end
 
-  describe "report_result/3" do
+  describe "report_result/4" do
     test "completing a task unblocks dependents", %{scheduler: pid} do
       {:ok, task} = Scheduler.request_task(pid, "agent-1")
       assert task.task_id == "@repo/ui#build"
 
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
 
       {:ok, task2} = Scheduler.request_task(pid, "agent-1")
       assert task2.task_id in ["admin#build", "api#build"]
@@ -56,7 +56,7 @@ defmodule DxCore.Agents.SchedulerTest do
 
     test "failing a task skips dependents (continue_all strategy)", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
+      {:ok, _} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :failed)
 
       status = Scheduler.status(pid)
       assert status.tasks["admin#build"].status == :skipped
@@ -68,25 +68,25 @@ defmodule DxCore.Agents.SchedulerTest do
   describe "report_result returns run_status atomically" do
     test "returns :running while tasks remain", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
     end
 
     test "returns :complete when last task succeeds", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", :success)
+      {:ok, :running} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :success)
+
+      {:ok, t2} = Scheduler.request_task(pid, "agent-1")
+      {:ok, t3} = Scheduler.request_task(pid, "agent-2")
+      {:ok, :running} = Scheduler.report_result(pid, t2.task_id, "agent-1", :success)
+      {:ok, :running} = Scheduler.report_result(pid, t3.task_id, "agent-2", :success)
 
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, _} = Scheduler.request_task(pid, "agent-2")
-      {:ok, :running} = Scheduler.report_result(pid, "admin#build", :success)
-      {:ok, :running} = Scheduler.report_result(pid, "api#build", :success)
-
-      {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", :success)
+      {:ok, :complete} = Scheduler.report_result(pid, "admin#test", "agent-1", :success)
     end
 
     test "returns :failed when failure propagates to all remaining tasks", %{scheduler: pid} do
       {:ok, _} = Scheduler.request_task(pid, "agent-1")
-      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", :failed)
+      {:ok, :failed} = Scheduler.report_result(pid, "@repo/ui#build", "agent-1", :failed)
     end
   end
 

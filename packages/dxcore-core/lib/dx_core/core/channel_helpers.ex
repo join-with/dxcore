@@ -43,7 +43,7 @@ defmodule DxCore.Core.ChannelHelpers do
         agent_id = socket.assigns.agent_id
         session_id = socket.assigns.session_id
         agent_info = socket.assigns.agent_info
-        dispatcher_topic = socket.assigns.dispatcher_topic
+        fallback_dispatcher_topic = socket.assigns.dispatcher_topic
 
         scheduler_pids = DxCore.Core.Scheduler.list_for_session(session_id)
 
@@ -59,6 +59,7 @@ defmodule DxCore.Core.ChannelHelpers do
           {pid, run_id, task} ->
             push(socket, "assign_task", %{
               "task_id" => task.task_id,
+              "run_id" => run_id,
               "package" => task.package,
               "task" => task.task,
               "hash" => task.hash,
@@ -66,7 +67,17 @@ defmodule DxCore.Core.ChannelHelpers do
               "shard" => task.shard
             })
 
-            @__channel_endpoint.broadcast!(dispatcher_topic, "task_started", %{
+            # Prefer the scheduler's own dispatcher_topic — for SaaS this is the
+            # run-scoped topic set during submit_graph/rehydration; for OSS the
+            # scheduler stores no topic and we fall back to the session-scoped
+            # one on the socket.
+            run_scoped_topic =
+              case DxCore.Core.Scheduler.dispatcher_topic(pid) do
+                nil -> fallback_dispatcher_topic
+                topic -> topic
+              end
+
+            @__channel_endpoint.broadcast!(run_scoped_topic, "task_started", %{
               "task_id" => task.task_id,
               "agent_id" => agent_id
             })

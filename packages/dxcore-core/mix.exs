@@ -30,7 +30,8 @@ defmodule DxCore.Core.MixProject do
 
   defp deps do
     [
-      {:jason, "~> 1.2"}
+      {:jason, "~> 1.2"},
+      {:telemetry, "~> 1.0"}
     ]
   end
 
