@@ -9,10 +9,19 @@ defmodule DxCore.Core.ChannelHelpers do
 
       use DxCore.Core.ChannelHelpers, endpoint: MyApp.Web.Endpoint
 
-  This injects `try_assign_task/1` and `handle_disconnect/1` as private
-  functions into the using module, bound to the given endpoint. These
-  functions call `push/3` and `assign/3` which must be available in the
-  using module (i.e. it must be a Phoenix Channel).
+  This injects `try_assign_task/1`, `try_assign_task/2`, and
+  `handle_disconnect/1` as private functions into the using module, bound
+  to the given endpoint. These functions call `push/3` and `assign/3`
+  which must be available in the using module (i.e. it must be a Phoenix
+  Channel).
+
+  `try_assign_task/2` accepts an optional `{scheduler_pid, run_id}` hint
+  carried in the `tasks_available` broadcast payload. When provided, the
+  helper skips the `Horde.Registry`-backed `Scheduler.list_for_session/2`
+  lookup and calls `Scheduler.request_task/3` directly on the supplied
+  pid. This closes the cross-pod race documented in #2143 where a
+  newly-registered Scheduler is not yet visible in a remote pod's local
+  CRDT view by the time the `tasks_available` broadcast arrives there.
 
   `get_run_id/1` is a regular function — call it as
   `DxCore.Core.ChannelHelpers.get_run_id(scheduler)`.
@@ -39,7 +48,7 @@ defmodule DxCore.Core.ChannelHelpers do
     quote do
       @__channel_endpoint unquote(endpoint)
 
-      defp try_assign_task(socket) do
+      defp try_assign_task(socket, scheduler_hint \\ nil) do
         agent_id = socket.assigns.agent_id
         session_id = socket.assigns.session_id
         agent_info = socket.assigns.agent_info
@@ -49,13 +58,17 @@ defmodule DxCore.Core.ChannelHelpers do
         # organization's id at join time so the scan stays org-scoped.
         org_id = socket.assigns[:org_id]
 
-        scheduler_pids = DxCore.Core.Scheduler.list_for_session(org_id, session_id)
+        scheduler_pids =
+          case scheduler_hint do
+            {pid, run_id} when is_pid(pid) -> [{pid, run_id}]
+            _ -> DxCore.Core.Scheduler.list_for_session(org_id, session_id)
+          end
 
         result =
           Enum.find_value(scheduler_pids, fn {pid, run_id} ->
-            case DxCore.Core.Scheduler.request_task(pid, agent_id, agent_info) do
+            case safe_request_task(pid, agent_id, agent_info) do
               {:ok, task} -> {pid, run_id, task}
-              :no_task -> nil
+              _ -> nil
             end
           end)
 
@@ -127,6 +140,17 @@ defmodule DxCore.Core.ChannelHelpers do
         end
 
         :ok
+      end
+
+      # Wraps `Scheduler.request_task/3` so a dead pid (e.g. a stale hint
+      # carried in a delayed broadcast) does not exit the channel process.
+      # Falls through to `:no_task` and the caller drops to the empty
+      # result, leaving the existing `tasks_available` flow to retry on the
+      # next broadcast.
+      defp safe_request_task(pid, agent_id, agent_info) do
+        DxCore.Core.Scheduler.request_task(pid, agent_id, agent_info)
+      catch
+        :exit, _ -> :no_task
       end
     end
   end

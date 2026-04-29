@@ -324,6 +324,64 @@ defmodule DxCore.Agents.Web.AgentChannelTest do
       # Should get a task since scheduler has frontier tasks
       assert_push "assign_task", %{"task_id" => _}
     end
+
+    test "agent uses scheduler_pid from payload (#2143 symmetry)" do
+      # Mirrors the SaaS regression: the OSS dispatcher broadcasts with
+      # `%{scheduler_pid, run_id}` for cross-coordinator parity. OSS is
+      # single-node so there's no race to fix, but the agent must still
+      # honor the pid hint.
+      scope = Scope.for_tenant("test-tenant-pid", "Test Corp PID")
+      {:ok, session_id} = Sessions.create_session(scope)
+      {scheduler, run_id} = start_unregistered_scheduler(session_id)
+
+      # Sanity: default lookup returns [], so the test exercises the pid path.
+      assert DxCore.Core.Scheduler.list_for_session(nil, session_id) == []
+
+      {:ok, _, socket} =
+        DxCore.Agents.Web.AgentSocket
+        |> socket("user_id_pid", %{current_scope: scope})
+        |> subscribe_and_join(DxCore.Agents.Web.AgentChannel, "agent:#{session_id}")
+
+      push(socket, "agent_ready", %{"agent_id" => "agent-pid"})
+      refute_push "assign_task", _, 100
+
+      DxCore.Agents.Web.Endpoint.broadcast!(
+        "agent:#{session_id}",
+        "tasks_available",
+        %{scheduler_pid: scheduler, run_id: run_id}
+      )
+
+      assert_push "assign_task", %{"task_id" => "@repo/ui#build", "run_id" => ^run_id}
+    end
+
+    # Mirrors the SaaS test helper of the same name. Starts a Scheduler in
+    # a private (non-default) Registry so the agent's
+    # `Scheduler.list_for_session/2` lookup returns []; broadcasts must
+    # carry the pid for the agent to discover the scheduler.
+    defp start_unregistered_scheduler(session_id) do
+      private_registry = :"sched_reg_oss_#{System.unique_integer([:positive])}"
+      start_supervised!({Registry, keys: :unique, name: private_registry})
+
+      json = File.read!(Path.join(@fixtures_dir, "dry_run_simple.json"))
+      {:ok, graph} = TaskGraph.parse(json)
+      run_id = "private-oss-run-#{System.unique_integer([:positive])}"
+
+      {:ok, scheduler} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: run_id,
+          session_id: session_id,
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          registry: private_registry,
+          via_module: Registry
+        )
+
+      on_exit(fn ->
+        if Process.alive?(scheduler), do: GenServer.stop(scheduler)
+      end)
+
+      {scheduler, run_id}
+    end
   end
 
   # Helper to handle the variable completion order of tasks

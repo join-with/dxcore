@@ -139,8 +139,14 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
       assert_receive %Phoenix.Socket.Broadcast{
         topic: "agent:" <> ^session_id,
         event: "tasks_available",
-        payload: %{}
+        payload: %{scheduler_pid: scheduler_pid, run_id: "test-run"}
       }
+
+      # OSS is single-node so the race #2143 fixes doesn't manifest, but the
+      # broadcast carries the same pid + run_id payload as SaaS for
+      # symmetry — the agent uses these to skip the registry lookup.
+      assert is_pid(scheduler_pid)
+      assert Process.alive?(scheduler_pid)
     end
 
     test "stops existing scheduler before starting new one for same run_id", %{

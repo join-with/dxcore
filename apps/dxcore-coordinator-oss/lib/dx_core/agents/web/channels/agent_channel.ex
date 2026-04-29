@@ -144,16 +144,25 @@ defmodule DxCore.Agents.Web.AgentChannel do
   end
 
   @impl true
-  def handle_out("tasks_available", _payload, socket) do
+  def handle_out("tasks_available", payload, socket) do
     socket =
       if socket.assigns[:agent_id] && socket.assigns[:current_scheduler] == nil do
-        try_assign_task(socket)
+        try_assign_task(socket, scheduler_hint(payload))
       else
         socket
       end
 
     {:noreply, socket}
   end
+
+  # Mirrors the SaaS coordinator: payload may carry `{scheduler_pid,
+  # run_id}` so the agent skips the registry lookup. OSS is single-node so
+  # there's no race to fix here, but keeping both channels symmetric means
+  # the same `tasks_available` broadcast shape works for both.
+  defp scheduler_hint(%{scheduler_pid: pid, run_id: run_id}) when is_pid(pid),
+    do: {pid, run_id}
+
+  defp scheduler_hint(_), do: nil
 
   @impl true
   def terminate(_reason, socket) do

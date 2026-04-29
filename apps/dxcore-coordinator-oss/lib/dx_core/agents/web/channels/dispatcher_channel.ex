@@ -81,7 +81,7 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
       )
 
     # Start scheduler under DynamicSupervisor
-    {:ok, _pid} =
+    {:ok, scheduler_pid} =
       DynamicSupervisor.start_child(
         DxCore.Core.SchedulerSupervisor,
         {DxCore.Core.Scheduler,
@@ -111,8 +111,14 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
 
       Sessions.mark_run_complete(session_id, run_id)
     else
-      # Notify agents in this session to check for tasks
-      DxCore.Agents.Web.Endpoint.broadcast!(socket.assigns.agent_topic, "tasks_available", %{})
+      # Carry the scheduler pid + run_id so agents skip the registry lookup.
+      # Symmetric with SaaS (#2143); on OSS this is single-node so there's no
+      # race, but keeping the broadcast shape uniform means both coordinators
+      # share one `tasks_available` payload contract.
+      DxCore.Agents.Web.Endpoint.broadcast!(socket.assigns.agent_topic, "tasks_available", %{
+        scheduler_pid: scheduler_pid,
+        run_id: run_id
+      })
     end
 
     {:reply,
