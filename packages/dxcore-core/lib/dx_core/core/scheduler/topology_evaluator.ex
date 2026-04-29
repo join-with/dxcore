@@ -59,9 +59,7 @@ defmodule DxCore.Core.Scheduler.TopologyEvaluator do
     if not function_exported?(state.plugin, :evaluate_assignability, 2) do
       state
     else
-      connected_agents =
-        Registry.lookup(agent_registry(state), state.session_id)
-        |> Enum.map(fn {_pid, agent_info} -> agent_info end)
+      connected_agents = list_agents(state)
 
       frontier_tasks =
         state.frontier
@@ -131,14 +129,14 @@ defmodule DxCore.Core.Scheduler.TopologyEvaluator do
     end
   end
 
-  # ── Registry helpers ───────────────────────────────────────────────
+  # ── Agent enumeration ──────────────────────────────────────────────
 
-  defp agent_registry(state) do
-    state.context[:agent_registry] ||
-      Application.get_env(:dxcore_core, :agent_registry, DxCore.SaaS.AgentRegistry)
+  defp list_agents(state) do
+    case Map.get(state.context, :agent_lister) do
+      nil -> []
+      fun when is_function(fun, 1) -> fun.(state)
+    end
   end
 
-  defp count_connected_agents(state) do
-    Registry.lookup(agent_registry(state), state.session_id) |> length()
-  end
+  defp count_connected_agents(state), do: length(list_agents(state))
 end
