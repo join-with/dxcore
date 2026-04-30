@@ -1,5 +1,13 @@
 # @repo/dxcore-core
 
+## 0.7.1
+
+### Patch Changes
+
+- 4446689: Add `@derive Jason.Encoder` to `DxCore.Core.AgentInfo`. After #2110 the SaaS coordinator's `agent_channel` puts `%AgentInfo{}` into Phoenix.Presence metadata; the WebSocket serializer JSON-encodes every `presence_diff` it forwards to subscribers, and without `@derive` the encoder protocol raised, crashing `Phoenix.Tracker`'s shard GenServer on every agent join. Adds a regression test in `dxcore-core/test/dx_core/core/agent_info_test.exs`.
+- 35dda4a: Fix cross-pod scheduler/agent invisibility on the multi-pod SaaS coordinator (#2110). The topology evaluator in `dxcore-core` now reads connected agents through a pluggable `agent_lister` function in scheduler context instead of a hard-coded local Registry. The SaaS coordinator injects a `Phoenix.Presence`-backed lister (`DxCore.SaaS.Scheduler.AgentDiscovery`) so a scheduler placed on Pod B sees agents whose WebSockets landed on Pod A. The previously vestigial `DxCore.SaaS.AgentRegistry` is removed. Validates with a `:peer`-based cluster regression test that exercises the full Scheduler + TopologyEvaluator + AgentDiscovery + cross-node Presence pipeline.
+- a45dab6: Fix cross-pod race where agents miss the initial `tasks_available` broadcast on the multi-pod SaaS coordinator (#2143). The dispatcher's `submit_graph` now carries the freshly-spawned scheduler's pid + run_id in the `tasks_available` PubSub payload; agent channels read those directly and call `Scheduler.request_task/3` without going through `Horde.Registry`, which on a remote pod can lag the broadcast by up to one CRDT sync interval (~100 ms). The agent-side `try_assign_task/2` helper falls back to the legacy `Horde.Registry` lookup whenever the payload lacks a pid (covering reconnect/rehydration and any in-flight pre-upgrade broadcasts). Adds a `safe_request_task` wrapper so a stale-pid `:exit` doesn't crash the channel. OSS coordinator gets the same broadcast shape for symmetry even though it's single-node and not subject to the race.
+
 ## 0.7.0
 
 ### Minor Changes

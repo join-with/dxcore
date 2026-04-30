@@ -1,5 +1,15 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.2
+
+### Patch Changes
+
+- a45dab6: Fix cross-pod race where agents miss the initial `tasks_available` broadcast on the multi-pod SaaS coordinator (#2143). The dispatcher's `submit_graph` now carries the freshly-spawned scheduler's pid + run_id in the `tasks_available` PubSub payload; agent channels read those directly and call `Scheduler.request_task/3` without going through `Horde.Registry`, which on a remote pod can lag the broadcast by up to one CRDT sync interval (~100 ms). The agent-side `try_assign_task/2` helper falls back to the legacy `Horde.Registry` lookup whenever the payload lacks a pid (covering reconnect/rehydration and any in-flight pre-upgrade broadcasts). Adds a `safe_request_task` wrapper so a stale-pid `:exit` doesn't crash the channel. OSS coordinator gets the same broadcast shape for symmetry even though it's single-node and not subject to the race.
+- Updated dependencies [4446689]
+- Updated dependencies [35dda4a]
+- Updated dependencies [a45dab6]
+  - @repo/dxcore-core@0.7.1
+
 ## 0.5.1
 
 ### Patch Changes
