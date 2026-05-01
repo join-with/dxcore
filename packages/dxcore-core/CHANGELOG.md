@@ -1,5 +1,17 @@
 # @repo/dxcore-core
 
+## 0.7.2
+
+### Patch Changes
+
+- ac6793b: Add `repo-cli deps sync` and `repo-cli deps lint` for keeping `package.json`
+  workspace deps in sync with Elixir `mix.exs` path deps. Bootstrap migration
+  mirrors path deps across every Mix consumer — Turbo's hash graph now sees
+  library changes that previously slipped past release-bump (#2101).
+
+  The patch bump on every Mix consumer reflects the package.json content
+  churn from the bootstrap migration; it has no functional behavior change.
+
 ## 0.7.1
 
 ### Patch Changes
