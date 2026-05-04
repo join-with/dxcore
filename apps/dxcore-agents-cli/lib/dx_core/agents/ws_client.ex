@@ -156,23 +156,43 @@ defmodule DxCore.Agents.WsClient do
   @impl Slipstream
   def handle_call({:push_and_wait, event, payload}, from, socket) do
     topic = socket.assigns.topic
-    {:ok, ref} = push(socket, topic, event, payload)
 
-    pending = Map.put(socket.assigns.pending_replies, ref, from)
-    {:noreply, assign(socket, :pending_replies, pending)}
+    case safe_push(socket, topic, event, payload) do
+      {:ok, ref} ->
+        pending = Map.put(socket.assigns.pending_replies, ref, from)
+        {:noreply, assign(socket, :pending_replies, pending)}
+
+      {:error, reason} ->
+        Logger.warning("[ws_client] push_and_wait failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, socket}
+    end
   end
 
   @impl Slipstream
   def handle_cast({:push, event, payload}, socket) do
     topic = socket.assigns.topic
 
-    case push(socket, topic, event, payload) do
+    case safe_push(socket, topic, event, payload) do
       {:ok, _ref} ->
         {:noreply, socket}
 
       {:error, reason} ->
         Logger.warning("[ws_client] Push failed: #{inspect(reason)}")
         {:noreply, socket}
+    end
+  end
+
+  # Slipstream.push/4 ultimately does a GenServer.call against slipstream's
+  # internal connection process. If that process exits between the alive
+  # check and the call (e.g. server-initiated close during a coordinator
+  # rolling redeploy), the call propagates an :exit signal that would
+  # otherwise crash this GenServer. Catch it and surface as {:error, reason}
+  # so handle_disconnect can drive the reconnect (#2357).
+  defp safe_push(socket, topic, event, payload) do
+    try do
+      push(socket, topic, event, payload)
+    catch
+      :exit, reason -> {:error, {:transport_down, reason}}
     end
   end
 
