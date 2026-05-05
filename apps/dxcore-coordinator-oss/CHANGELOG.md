@@ -1,5 +1,14 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.6
+
+### Patch Changes
+
+- Updated dependencies [4836457]
+  - @repo/repo-cli@0.11.1
+  - @repo/dxcore-core@0.7.2
+  - @repo/jw-observability@0.3.4
+
 ## 0.5.5
 
 ### Patch Changes

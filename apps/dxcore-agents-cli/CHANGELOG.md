@@ -1,5 +1,13 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.4
+
+### Patch Changes
+
+- 6f9708b: Fix WsClient crashing when slipstream's transport process exits between an alive check and a `GenServer.call` (the race seen during a coordinator rolling redeploy). `handle_cast({:push, ...})` and `handle_call({:push_and_wait, ...})` now wrap the call in `try/catch :exit` and surface `{:error, {:transport_down, reason}}` instead of taking the agent down. Reconnects continue to be driven by `handle_disconnect`. Closes #2357.
+- Updated dependencies [4836457]
+  - @repo/repo-cli@0.11.1
+
 ## 0.8.3
 
 ### Patch Changes
