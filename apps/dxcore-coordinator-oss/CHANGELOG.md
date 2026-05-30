@@ -1,5 +1,23 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.7
+
+### Patch Changes
+
+- 73b1fef: Wake idle agents when a task completion grows the scheduler frontier (#3215).
+
+  `tasks_available` previously fired only at graph submission, so an agent that
+  drained its queue while later work was still blocked behind another agent's
+  long task was never re-woken — newly-unlocked tasks serialized onto the one
+  agent still cycling. Both coordinators now re-broadcast `tasks_available` on
+  the run-continues branch of the task-result handler, via a shared
+  `ChannelHelpers.broadcast_tasks_available/3` helper (also used by the
+  disconnect path). The Scheduler core is unchanged. Coordinator-only; no agent
+  release required.
+
+- Updated dependencies [73b1fef]
+  - @repo/dxcore-core@0.7.3
+
 ## 0.5.6
 
 ### Patch Changes
