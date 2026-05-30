@@ -134,12 +134,29 @@ defmodule DxCore.Core.ChannelHelpers do
             DxCore.Core.Scheduler.check_topology(pid)
           end
 
-          if agent_topic = socket.assigns[:agent_topic] do
-            @__channel_endpoint.broadcast!(agent_topic, "tasks_available", %{})
-          end
+          broadcast_tasks_available(socket)
         end
 
         :ok
+      end
+
+      # Wake idle agents on the session's agent topic. Idempotent and safe to
+      # over-call: `Scheduler.request_task` atomically claims a frontier task,
+      # so a woken herd just serializes into "a task or :no_task". When the
+      # scheduler pid + run_id are known (completion path), they ride the
+      # payload so woken agents skip the Horde lookup (#2143); otherwise the
+      # payload is empty (disconnect path) and agents fall back to the lookup.
+      defp broadcast_tasks_available(socket, scheduler_pid \\ nil, run_id \\ nil) do
+        if agent_topic = socket.assigns[:agent_topic] do
+          payload =
+            if is_pid(scheduler_pid) and not is_nil(run_id) do
+              %{scheduler_pid: scheduler_pid, run_id: run_id}
+            else
+              %{}
+            end
+
+          @__channel_endpoint.broadcast!(agent_topic, "tasks_available", payload)
+        end
       end
 
       # Wraps `Scheduler.request_task/3` so a dead pid (e.g. a stale hint

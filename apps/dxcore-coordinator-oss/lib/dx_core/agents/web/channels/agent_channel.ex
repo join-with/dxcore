@@ -117,6 +117,7 @@ defmodule DxCore.Agents.Web.AgentChannel do
       socket = try_assign_task(socket)
       {:noreply, socket}
     else
+      broadcast_tasks_available(socket, scheduler, run_id)
       socket = try_assign_task(socket)
       {:noreply, socket}
     end
