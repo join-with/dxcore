@@ -1,5 +1,12 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.8
+
+### Patch Changes
+
+- Updated dependencies [d40fd1a]
+  - @repo/jw-observability@0.3.5
+
 ## 0.5.7
 
 ### Patch Changes
