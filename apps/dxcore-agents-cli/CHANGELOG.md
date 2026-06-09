@@ -1,5 +1,13 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.6
+
+### Patch Changes
+
+- dc88f44: Disable Brainstretch Mobile dev release publishing until Play Store automation exists.
+  - Remove the unimplemented Brainstretch Mobile `release-dev` publish script.
+  - Filter Turbo dry-run tasks with `<NONEXISTENT>` commands from DxCore dispatch.
+
 ## 0.8.5
 
 ### Patch Changes
