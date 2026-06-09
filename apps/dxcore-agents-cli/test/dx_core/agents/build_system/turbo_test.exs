@@ -23,6 +23,31 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
       assert {:ok, []} = Turbo.parse_graph(~s({"tasks":[]}))
     end
 
+    test "drops tasks without package scripts" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "ui#release-dev",
+              "task" => "release-dev",
+              "package" => "ui",
+              "hash" => "abc",
+              "command" => "pnpm release-dev"
+            },
+            %{
+              "taskId" => "mobile#release-dev",
+              "task" => "release-dev",
+              "package" => "mobile",
+              "hash" => "def",
+              "command" => "<NONEXISTENT>"
+            }
+          ]
+        })
+
+      assert {:ok, [task]} = Turbo.parse_graph(json)
+      assert task["taskId"] == "ui#release-dev"
+    end
+
     test "returns error for invalid JSON" do
       assert {:error, msg} = Turbo.parse_graph("no json here")
       assert msg =~ "Failed to parse turbo JSON output:"

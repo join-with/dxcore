@@ -7,7 +7,12 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
   def parse_graph(json) do
     case Jason.decode(json) do
       {:ok, %{"tasks" => tasks}} when is_list(tasks) ->
-        {:ok, Enum.map(tasks, &normalize_task/1)}
+        tasks =
+          tasks
+          |> Enum.reject(&nonexistent_task?/1)
+          |> Enum.map(&normalize_task/1)
+
+        {:ok, tasks}
 
       {:ok, _} ->
         {:error, "Unexpected turbo output: missing tasks key"}
@@ -22,6 +27,9 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
     |> Map.put("cacheable", resolve_cacheable(task))
     |> Map.put("command", "npx turbo run #{task["task"]} --filter=#{task["package"]}")
   end
+
+  defp nonexistent_task?(%{"command" => "<NONEXISTENT>"}), do: true
+  defp nonexistent_task?(_), do: false
 
   # Read cacheable from resolvedTaskDefinition.cache (Turbo dry-run JSON).
   # Defaults to true since Turbo tasks are cacheable unless explicitly disabled.
