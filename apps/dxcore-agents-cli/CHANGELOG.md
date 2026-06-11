@@ -1,5 +1,32 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.7
+
+### Patch Changes
+
+- 7eabb71: Fix dxcore-agent crash when streaming invalid-UTF-8 build output.
+
+  The agent reads task output through a `{:line, 4096}` port, which splits long
+  lines at a fixed byte size and can cut a multibyte UTF-8 character in half.
+  Burrito/Zig prod-release builds emit `\r`-joined progress lines containing the
+  🔍 emoji, so such a split produced an invalid-UTF-8 chunk that crashed the
+  agent: `IO.puts` raised `ArgumentError` and `Jason.encode` raised on the
+  coordinator push, failing the task and turning CI red (#4144).
+
+  `handle_info/2` now scrubs each chunk to valid UTF-8 (invalid byte sequences →
+  U+FFFD) before logging to stdout and pushing to the coordinator.
+
+- 886a944: Fix dispatcher startup stall: scan for `dxcore.json` shard config with a
+  prune-walk instead of an unbounded `**/dxcore.json` wildcard.
+
+  `ShardConfig.scan/1` previously ran `Path.wildcard("**/dxcore.json")` from the
+  repo root, recursing through `node_modules` (~2k dirs / 4000 MiB), `_build`,
+  `deps`, `.git`, and `.turbo`. On the CI box this added ~73s of dead time before
+  the dispatcher submitted the task graph, while connected agents sat idle (#4140).
+  The scan now walks the tree manually, prunes vendored/build directories, and
+  does not follow symlinks — cutting a measured 21s (local) / 73s (CI) down to
+  sub-second.
+
 ## 0.8.6
 
 ### Patch Changes
