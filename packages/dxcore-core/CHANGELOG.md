@@ -1,5 +1,25 @@
 # @repo/dxcore-core
 
+## 0.7.4
+
+### Patch Changes
+
+- 8c1239d: Fix CI runs hanging when a task depends on a filtered no-op (`<NONEXISTENT>`) task.
+
+  The Turbo adapter drops `<NONEXISTENT>` (scriptless) tasks before dispatch, but
+  left dangling references to them in surviving tasks' dependency lists. The
+  coordinator's `compute_frontier` then treated a dependency on a task absent from
+  the graph as permanently unsatisfiable, so the dependent task never became
+  assignable — agents connected, requested work, and got nothing, hanging the run
+  with no error (confirmed live: `@repo/github-workflows#lint` blocked forever on
+  the dropped `@repo/github-workflows#deps`). See #4154.
+
+  Defense in depth:
+  - `@repo/dxcore-agents-cli`: when dropping `<NONEXISTENT>` tasks, prune their
+    ids from surviving tasks' `dependencies` (a dropped no-op is logically done).
+  - `@repo/dxcore-core`: treat a dependency on a task absent from the graph as
+    already-satisfied instead of blocking the dependent forever.
+
 ## 0.7.3
 
 ### Patch Changes
