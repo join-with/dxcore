@@ -69,6 +69,53 @@ defmodule DxCore.Core.SchedulerTest do
     %{scheduler: pid, session_id: session_id, graph: graph}
   end
 
+  describe "dangling dependencies (#4154 defense-in-depth)" do
+    test "a task whose dependency is absent from the graph stays assignable, not blocked forever" do
+      # Mirrors the prod hang: wf#lint depends on wf#deps, but wf#deps was dropped
+      # from the submitted graph (a <NONEXISTENT> no-op). A dependency on a task
+      # that isn't in the graph must be treated as already-satisfied, otherwise
+      # compute_frontier blocks wf#lint forever and the run hangs.
+      graph = %TaskGraph{
+        tasks: %{
+          "wf#lint" => %TaskGraph.Task{
+            task_id: "wf#lint",
+            task: "lint",
+            package: "wf",
+            hash: "h1",
+            command: "prettier",
+            deps: ["wf#deps", "cli#build"],
+            dependents: [],
+            requirements: %{},
+            cache_status: :miss
+          },
+          "cli#build" => %TaskGraph.Task{
+            task_id: "cli#build",
+            task: "build",
+            package: "cli",
+            hash: "h2",
+            command: "tsup",
+            deps: [],
+            dependents: ["wf#lint"],
+            requirements: %{},
+            cache_status: :hit
+          }
+        }
+      }
+
+      {:ok, pid} =
+        Scheduler.start_link(
+          graph: graph,
+          run_id: "dangling-#{System.unique_integer([:positive])}",
+          session_id: unique_session_id(),
+          plugin: DxCore.Core.Scheduler.NullPlugin,
+          failure_strategy: :continue_all
+        )
+
+      assert {:ok, %{task_id: "wf#lint"}} =
+               Scheduler.request_task(pid, "agent-1", %AgentInfo{agent_id: "agent-1"})
+    end
+  end
+
   describe "request_task/2" do
     test "assigns frontier task to agent", %{scheduler: pid} do
       assert {:ok, task} = Scheduler.request_task(pid, "agent-1")

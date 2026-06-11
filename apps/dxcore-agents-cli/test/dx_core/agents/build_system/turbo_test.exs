@@ -48,6 +48,52 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
       assert task["taskId"] == "ui#release-dev"
     end
 
+    test "prunes dropped <NONEXISTENT> task ids from surviving tasks' dependencies" do
+      # A dropped no-op task that a real task depends on (e.g. github-workflows#deps
+      # has no `deps` script -> <NONEXISTENT>, but #lint depends on it). The dropped
+      # task is logically already-done, so it must be removed from #lint's deps —
+      # otherwise the coordinator sees a dependency on a task not in the graph and
+      # blocks #lint forever (#4154).
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "wf#lint",
+              "task" => "lint",
+              "package" => "wf",
+              "hash" => "h1",
+              "command" => "prettier --check",
+              "dependencies" => ["wf#deps", "cli#build"]
+            },
+            %{
+              "taskId" => "wf#deps",
+              "task" => "deps",
+              "package" => "wf",
+              "hash" => "h2",
+              "command" => "<NONEXISTENT>",
+              "dependencies" => []
+            },
+            %{
+              "taskId" => "cli#build",
+              "task" => "build",
+              "package" => "cli",
+              "hash" => "h3",
+              "command" => "tsup",
+              "dependencies" => []
+            }
+          ]
+        })
+
+      assert {:ok, tasks} = Turbo.parse_graph(json)
+      ids = Enum.map(tasks, & &1["taskId"])
+      assert "wf#deps" not in ids
+
+      lint = Enum.find(tasks, &(&1["taskId"] == "wf#lint"))
+
+      assert lint["dependencies"] == ["cli#build"],
+             "expected the dropped wf#deps to be pruned from wf#lint deps, got #{inspect(lint["dependencies"])}"
+    end
+
     test "returns error for invalid JSON" do
       assert {:error, msg} = Turbo.parse_graph("no json here")
       assert msg =~ "Failed to parse turbo JSON output:"

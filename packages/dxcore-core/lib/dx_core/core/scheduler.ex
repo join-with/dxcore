@@ -610,7 +610,10 @@ defmodule DxCore.Core.Scheduler do
       t.status == :pending and
         Enum.all?(t.deps, fn dep ->
           case tasks[dep] do
-            nil -> false
+            # A dependency on a task absent from the graph (e.g. a <NONEXISTENT>
+            # no-op the dispatcher dropped) is treated as already-satisfied
+            # rather than blocking the dependent forever. See #4154.
+            nil -> true
             dep_task -> dep_task.status in [:done, :skipped]
           end
         end)
