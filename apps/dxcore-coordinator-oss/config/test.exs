@@ -12,7 +12,3 @@ config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
-
-# Disable prom_ex metrics server in tests to avoid EADDRINUSE when tests
-# run alongside a running Phoenix release (e.g. Playwright E2E setup).
-config :dxcore_coordinator_oss, DxCore.Agents.PromEx, disabled: true

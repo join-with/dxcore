@@ -7,7 +7,6 @@ defmodule DxCore.Agents.Application do
 
   @impl true
   def start(_type, _args) do
-    JwObservability.setup(otp_app: :dxcore_coordinator_oss, repo_prefix: nil)
     :ets.new(:dxcore_agents_tenants, [:set, :public, :named_table, read_concurrency: true])
     DxCore.Agents.Tenants.seed_from_env()
 
@@ -22,7 +21,6 @@ defmodule DxCore.Agents.Application do
        table_name: :dxcore_oss_task_log_buffer, name: DxCore.Agents.TaskLogBuffer},
       {DynamicSupervisor, name: DxCore.Core.SchedulerSupervisor, strategy: :one_for_one},
       DxCore.Agents.Sessions.Server,
-      DxCore.Agents.PromEx,
       # Start to serve requests, typically the last entry
       DxCore.Agents.Web.Endpoint
     ]

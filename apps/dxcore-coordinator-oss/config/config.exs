@@ -7,9 +7,6 @@
 # General application configuration
 import Config
 
-config :jw_observability,
-  otp_app: :dxcore_coordinator_oss
-
 config :dxcore_coordinator_oss,
   generators: [timestamp_type: :utc_datetime],
   scheduler_plugin: DxCore.Core.Scheduler.NullPlugin
@@ -35,10 +32,5 @@ config :phoenix, :json_library, Jason
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
-
-# Prometheus metrics on a dedicated HTTP server — separate port from the main
-# Phoenix endpoint, never exposed via ingress. Alloy scrapes pod-to-pod.
-config :dxcore_coordinator_oss, DxCore.Agents.PromEx,
-  metrics_server: [port: 4021, path: "/metrics", protocol: :http]
 
 import_config "#{config_env()}.exs"
