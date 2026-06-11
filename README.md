@@ -180,3 +180,5 @@ DxCore is an independent project by Eyal Lapid ([JoinWith](https://joinwith.com)
 - **GitHub** and **GitHub Actions** are trademarks of GitHub, Inc. (a Microsoft company).
 
 All other trademarks are the property of their respective owners. Use of these names is for identification purposes only and does not imply endorsement.
+
+<!-- cla verification, will be reverted -->
