@@ -1,5 +1,25 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.10
+
+### Patch Changes
+
+- e895b50: Remove the observability stack from the OSS coordinator.
+
+  `dxcore-coordinator-oss` depended on the internal `jw_observability` package
+  (Grafana Cloud + Sentry + OpenTelemetry) via `{:jw_observability, path:
+"../../packages/jw-observability"}`. The public `join-with/dxcore` mirror does
+  not sync that package, so every release build in the public repo failed with
+  `** (Mix) Can't continue due to errors on dependencies`.
+
+  The open-source coordinator should not require the proprietary telemetry
+  plumbing, so this removes it entirely: the `jw_observability` dep (Elixir and
+  JS workspace), the `DxCore.Agents.PromEx` module and its supervision child, the
+  `JwObservability.setup/1` boot call, the `Sentry.PlugCapture`/`Sentry.PlugContext`
+  endpoint plugs, the OpenTelemetry runtime config, and the now-unused transitive
+  deps in `mix.lock`. The SaaS coordinator keeps its observability and is
+  unaffected.
+
 ## 0.5.9
 
 ### Patch Changes
