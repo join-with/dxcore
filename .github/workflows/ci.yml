@@ -107,7 +107,7 @@ jobs:
         working-directory: apps/dxcore-agents-cli
         run: |
           mix deps.get
-          BURRITO_TARGET=linux MIX_ENV=prod mix release --overwrite
+          BURRITO_TARGET=linux_x86_64 MIX_ENV=prod mix release --overwrite
 
       - name: Upload coordinator release
         uses: actions/upload-artifact@v4
@@ -120,5 +120,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dxcore-agents-cli
-          path: apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux
+          path: apps/dxcore-agents-cli/burrito_out/dxcore_agents_cli_linux_x86_64
           if-no-files-found: error
