@@ -90,6 +90,24 @@ defmodule DxCore.Agents.ShardConfigTest do
 
       assert ShardConfig.scan(base) == %{"zero-app#lint" => 2}
     end
+
+    test "does not descend into vendored/build directories", %{base: base} do
+      # A real config at a package root that must still be found.
+      real_pkg = Path.join(base, "apps/real-app")
+      File.mkdir_p!(real_pkg)
+      File.write!(Path.join(real_pkg, "dxcore.json"), ~s({"shards": {"test": 4}}))
+
+      # Stray dxcore.json files buried inside directories that must be pruned.
+      # On a real monorepo these trees (node_modules especially) hold tens of
+      # thousands of dirs and walking them costs ~73s; they must be skipped.
+      for pruned <- ~w(node_modules _build deps .git .turbo .elixir_ls) do
+        buried = Path.join([base, "apps/real-app", pruned, "nested-pkg"])
+        File.mkdir_p!(buried)
+        File.write!(Path.join(buried, "dxcore.json"), ~s({"shards": {"test": 99}}))
+      end
+
+      assert ShardConfig.scan(base) == %{"real-app#test" => 4}
+    end
   end
 
   describe "format_summary/1" do

@@ -13,9 +13,20 @@ defmodule DxCore.Agents.ShardConfig do
 
   require Logger
 
+  # Directories that never contain a package's own `dxcore.json` but hold huge
+  # vendored/build trees. Walking them is wasted work — `node_modules` alone is
+  # ~2k dirs / 4000 MiB in this monorepo and pushed dispatch startup to ~73s on
+  # the CI box (see #4140). Pruning them by name keeps the scan generic across
+  # build systems while skipping the expensive subtrees.
+  @pruned_dirs ~w(node_modules _build deps .git .turbo .elixir_ls)
+
   @doc """
-  Scans `base_dir` for all `**/dxcore.json` files and returns a merged map
-  of `%{"package#task" => shard_count}`.
+  Scans `base_dir` recursively for all `dxcore.json` files and returns a merged
+  map of `%{"package#task" => shard_count}`.
+
+  Vendored and build directories (`node_modules`, `_build`, `deps`, `.git`,
+  `.turbo`, `.elixir_ls`) are pruned and symlinks are not followed, so the walk
+  stays cheap even in a large monorepo.
 
   - Skips files with invalid JSON (logs a warning)
   - Skips files without a `shards` key
@@ -23,10 +34,8 @@ defmodule DxCore.Agents.ShardConfig do
   """
   @spec scan(String.t()) :: %{String.t() => pos_integer()}
   def scan(base_dir) do
-    pattern = Path.join(base_dir, "**/dxcore.json")
-
-    pattern
-    |> Path.wildcard()
+    base_dir
+    |> find_dxcore_files()
     |> Enum.reduce(%{}, fn file_path, acc ->
       case parse_file(file_path) do
         {:ok, entries} -> Map.merge(acc, entries)
@@ -34,6 +43,25 @@ defmodule DxCore.Agents.ShardConfig do
       end
     end)
   end
+
+  # Recursively collect dxcore.json paths, pruning vendored/build dirs and never
+  # following symlinks (pnpm fills node_modules with them, and they risk cycles).
+  defp find_dxcore_files(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        Enum.flat_map(entries, fn entry -> classify(Path.join(dir, entry), entry) end)
+
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  defp classify(path, "dxcore.json"), do: if(real_file?(path), do: [path], else: [])
+  defp classify(_path, entry) when entry in @pruned_dirs, do: []
+  defp classify(path, _entry), do: if(real_dir?(path), do: find_dxcore_files(path), else: [])
+
+  defp real_file?(path), do: match?({:ok, %File.Stat{type: :regular}}, File.lstat(path))
+  defp real_dir?(path), do: match?({:ok, %File.Stat{type: :directory}}, File.lstat(path))
 
   @doc """
   Formats a shard config map as a sorted list of human-readable strings.
