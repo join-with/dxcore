@@ -193,11 +193,17 @@ defmodule DxCore.Agents.CLI.Agent do
   end
 
   def handle_info({port, {:data, {_type, line}}}, %{current_port: port} = state) do
-    log(state, line)
+    # `{:line, _}` ports split long lines at a fixed byte size, which can cut a
+    # multibyte UTF-8 char in half and yield an invalid-UTF-8 chunk. Both sinks
+    # below reject that (`IO.puts` -> ArgumentError, `Jason.encode` -> error),
+    # so scrub to valid UTF-8 first. See #4144.
+    safe_line = sanitize_log_line(line)
+
+    log(state, safe_line)
 
     DxCore.Agents.WsClient.push(state.client, "task_log", %{
       "task_id" => state.current_task_id,
-      "line" => line
+      "line" => safe_line
     })
 
     {:noreply, state, :infinity}
@@ -313,6 +319,23 @@ defmodule DxCore.Agents.CLI.Agent do
   defp log(%{agent_id: agent_id, session_id: session_id}, msg) do
     IO.puts("[agent:#{agent_id}@#{session_id}] #{msg}")
   end
+
+  # Replace invalid UTF-8 byte sequences (e.g. a multibyte char split across a
+  # `{:line, _}` port chunk boundary) with U+FFFD so the line is safe to write
+  # to stdout and to JSON-encode for the coordinator. Valid lines pass through
+  # untouched. See #4144.
+  @doc false
+  def sanitize_log_line(line) when is_binary(line) do
+    if String.valid?(line), do: line, else: scrub_utf8(line, <<>>)
+  end
+
+  defp scrub_utf8(<<>>, acc), do: acc
+
+  defp scrub_utf8(<<grapheme::utf8, rest::binary>>, acc),
+    do: scrub_utf8(rest, <<acc::binary, grapheme::utf8>>)
+
+  defp scrub_utf8(<<_invalid, rest::binary>>, acc),
+    do: scrub_utf8(rest, <<acc::binary, "�">>)
 
   defp kill_port(port) do
     os_pid =

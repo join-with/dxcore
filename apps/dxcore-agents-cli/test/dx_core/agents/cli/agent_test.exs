@@ -379,6 +379,18 @@ defmodule DxCore.Agents.CLI.AgentTest do
       refute_receive {:"$gen_cast", {:push, "task_log", _}}, 10
     end
 
+    test "sanitize_log_line passes valid UTF-8 through unchanged" do
+      line = "build: info: 🔍 Files Packed: 548"
+      assert Agent.sanitize_log_line(line) == line
+    end
+
+    test "sanitize_log_line scrubs a split multibyte char to valid UTF-8" do
+      # First two bytes of 🔍 (<<240, 159, 148, 141>>) — an incomplete codepoint.
+      result = Agent.sanitize_log_line(<<"Packed: 548", 240, 159>>)
+      assert String.valid?(result)
+      assert result =~ "Packed: 548"
+    end
+
     defp open_test_port do
       port = Port.open({:spawn, "sleep 60"}, [:binary, :exit_status])
 
@@ -434,6 +446,26 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
       assert_receive {:"$gen_cast",
                       {:push, "task_log", %{"task_id" => "t1", "line" => "partial"}}}
+    end
+
+    test "port data with invalid UTF-8 does not crash and pushes valid UTF-8" do
+      port = open_test_port()
+      state = base_state(%{current_port: port, current_task_id: "t1", start_time: 0})
+
+      # 🔍 is <<240, 159, 148, 141>>. A {:line, 4096} read boundary can split a
+      # multibyte char, yielding an invalid-UTF-8 chunk ending mid-codepoint —
+      # the real CI crash (#4144): IO.puts/Jason both raise on invalid UTF-8.
+      invalid = <<"Files Packed: 548", 240, 159>>
+      refute String.valid?(invalid)
+
+      msg = {port, {:data, {:noeol, invalid}}}
+
+      capture_io(fn ->
+        assert {:noreply, ^state, :infinity} = Agent.handle_info(msg, state)
+      end)
+
+      assert_receive {:"$gen_cast", {:push, "task_log", %{"task_id" => "t1", "line" => line}}}
+      assert String.valid?(line)
     end
 
     test "port exit_status pushes task_result and clears port from state" do
