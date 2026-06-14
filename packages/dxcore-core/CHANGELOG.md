@@ -1,5 +1,14 @@
 # @repo/dxcore-core
 
+## 0.8.0
+
+### Minor Changes
+
+- c544d37: Add a periodic TTL sweep to `TaskLogBuffer` so log lines from runs that never reach a terminal status are reclaimed instead of accumulating in ETS forever.
+  - New `start_link/1` opts `:ttl_ms` (default 2h) and `:sweep_interval_ms` (default 5m); existing callers are unaffected (defaults apply).
+  - The owning GenServer deletes ETS rows older than the TTL on each tick and emits `[:dxcore, :task_log_buffer, :sweep]` / `:sweep_error` telemetry for observability.
+  - Fixes the dxcore.dev production OOM/503 cycle where orphaned-run log buffers grew unbounded until both replicas OOMKilled (#4382, SP1).
+
 ## 0.7.4
 
 ### Patch Changes

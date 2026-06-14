@@ -1,5 +1,13 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.12
+
+### Patch Changes
+
+- Updated dependencies [c544d37]
+  - @repo/dxcore-core@0.8.0
+  - @repo/repo-cli@0.11.2
+
 ## 0.5.11
 
 ### Patch Changes
