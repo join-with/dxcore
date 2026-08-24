@@ -1,5 +1,12 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.11
+
+### Patch Changes
+
+- Updated dependencies [b2034b6]
+  - @repo/repo-cli@0.11.5
+
 ## 0.8.10
 
 ### Patch Changes
