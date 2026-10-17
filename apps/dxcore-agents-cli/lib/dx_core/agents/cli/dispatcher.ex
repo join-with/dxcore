@@ -234,7 +234,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   def handle_info({:joined, _topic}, %{tasks: tasks} = state) when tasks != nil do
     IO.puts("[dispatcher:#{state.session_id}] Connected, submitting task graph...")
 
-    resolved_tasks = resolve_requirements(tasks)
+    resolved_tasks = tasks |> resolve_requirements() |> Enum.map(&wire_task/1)
 
     payload = %{
       "run_id" => state.run_id,
@@ -310,6 +310,19 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     IO.puts("[dispatcher:#{state.session_id}] Unexpected message: #{inspect(msg)}")
     {:noreply, state, state.timeout_ms}
   end
+
+  # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
+  # `parse_task/1`, kept equal by dispatcher_test.exs). A build system's task
+  # carries much more: a turbo dry-run task holds every input file's hash, its
+  # env vars and its resolved definition, about 11 KB a task, which on an
+  # 800-task graph OOM-killed the coordinator.
+  @wire_fields ~w(taskId task package hash command dependencies dependents cache cacheable shard requirements)
+
+  @doc "Keeps only the fields of a task the coordinator reads."
+  def wire_task(task) when is_map(task), do: Map.take(task, @wire_fields)
+
+  @doc false
+  def wire_fields, do: @wire_fields
 
   @doc """
   Resolves dxcore requirements from each task's package.json.

@@ -400,6 +400,61 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
                        }}}
     end
 
+    test "joined with tasks submits only the fields the coordinator reads" do
+      # A turbo --dry=json task, abridged: inputs, outputs, env vars and the
+      # resolved definition are what made an 827-task graph 9 MB.
+      turbo_task = %{
+        "taskId" => "@repo/app#test",
+        "task" => "test",
+        "package" => "@repo/app",
+        "hash" => "abc123",
+        "command" => "npx turbo run test --filter=@repo/app",
+        "dependencies" => ["@repo/app#build"],
+        "dependents" => [],
+        "cache" => %{"status" => "MISS", "local" => false, "remote" => false},
+        "cacheable" => true,
+        "shard" => %{"index" => 0, "count" => 2},
+        "directory" => "apps/app",
+        "inputs" => %{"lib/app.ex" => "f00d", "mix.exs" => "beef"},
+        "outputs" => ["_build/**"],
+        "environmentVariables" => %{"specified" => %{"env" => ["MIX_ENV="]}},
+        "resolvedTaskDefinition" => %{"dependsOn" => ["^build"]},
+        "logFile" => "apps/app/.turbo/turbo-test.log"
+      }
+
+      test_pid = self()
+
+      client =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, {:push_and_wait, _event, _payload} = msg} ->
+              GenServer.reply(from, {:ok, %{"total_tasks" => 1, "cached_tasks" => 0}})
+              send(test_pid, {:ws_call, msg})
+          end
+        end)
+
+      state = base_state(%{client: client, tasks: [turbo_task]})
+
+      assert {:noreply, _state, 60_000} =
+               Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
+
+      assert_receive {:ws_call, {:push_and_wait, "submit_graph", %{"tasks" => [submitted]}}}
+
+      assert submitted == %{
+               "taskId" => "@repo/app#test",
+               "task" => "test",
+               "package" => "@repo/app",
+               "hash" => "abc123",
+               "command" => "npx turbo run test --filter=@repo/app",
+               "dependencies" => ["@repo/app#build"],
+               "dependents" => [],
+               "cache" => %{"status" => "MISS", "local" => false, "remote" => false},
+               "cacheable" => true,
+               "shard" => %{"index" => 0, "count" => 2},
+               "requirements" => %{}
+             }
+    end
+
     test "joined with tasks submits graph including shard_config" do
       tasks = [%{"taskId" => "t1"}]
       shard_config = %{"e2e-app#test" => 4}
@@ -698,6 +753,28 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    end
+  end
+
+  describe "wire_fields/0" do
+    # The coordinator lives in another package, so the field list can't be
+    # shared code; this reads its parser and fails when the two drift apart.
+    test "are exactly the task fields the coordinator's TaskGraph reads" do
+      path =
+        Path.expand(
+          "../../../../../../packages/dxcore-core/lib/dx_core/core/task_graph.ex",
+          __DIR__
+        )
+
+      source = File.read!(path)
+
+      read_by_coordinator =
+        Regex.scan(~r/raw\["([A-Za-z]+)"\]|defp parse_[a-z_]+\(%\{"([A-Za-z]+)"/, source)
+        |> Enum.map(fn [_ | groups] -> Enum.find(groups, &(&1 != "")) end)
+        |> Enum.uniq()
+
+      assert length(read_by_coordinator) == 11
+      assert Enum.sort(Dispatcher.wire_fields()) == Enum.sort(read_by_coordinator)
     end
   end
 end
