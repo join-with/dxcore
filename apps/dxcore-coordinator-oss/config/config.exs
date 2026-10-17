@@ -30,6 +30,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Socket connect logs print the connect params, and agents and dispatchers
+# connect with the org API token (`%{"token" => ...}`); Phoenix.Logger masks
+# filtered keys there and in request logs.
+config :phoenix, :filter_parameters, ["password", "token"]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 
