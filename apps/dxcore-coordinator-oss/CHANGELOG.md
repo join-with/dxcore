@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.16
+
+### Patch Changes
+
+- ef6beda: The coordinator's socket connect logs show the agent or dispatcher token as `[FILTERED]` (#10867). Phoenix logs every socket connect's params at info level, and agents and dispatchers connect with the org API token; `config :phoenix, :filter_parameters` now lists `"token"` beside `"password"`, which also masks it in request logs.
+
 ## 0.5.15
 
 ### Patch Changes

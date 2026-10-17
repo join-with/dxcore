@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.12
+
+### Patch Changes
+
+- dc7f047: The dispatcher submits only the task fields the coordinator reads (`taskId`, `task`, `package`, `hash`, `command`, `dependencies`, `dependents`, `cache`, `cacheable`, `shard`, `requirements`). A turbo dry-run task also carries every input file's hash, its env vars and its resolved definition: an 827-task graph was 9.04 MB and OOM-killed the coordinator (#10866); the same graph is now 0.76 MB. A test keeps the field list equal to `DxCore.Core.TaskGraph`'s parser, and the test task now takes that file as an input so a change to it reruns the check.
+
 ## 0.8.11
 
 ### Patch Changes
