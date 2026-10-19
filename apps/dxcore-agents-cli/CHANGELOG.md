@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.8.13
+
+### Patch Changes
+
+- 888d150: The `deps` script now empties its own `deps` (and `.hex`, or the Playwright browsers folder) before fetching, so a cache restore that fails partway can no longer leave a half-restored dependency that the fetch takes as installed and that is then uploaded to the shared build cache (#11002).
+
 ## 0.8.12
 
 ### Patch Changes

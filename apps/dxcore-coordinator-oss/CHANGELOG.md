@@ -1,5 +1,22 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.17
+
+### Patch Changes
+
+- 888d150: The `deps` script now empties its own `deps` (and `.hex`, or the Playwright browsers folder) before fetching, so a cache restore that fails partway can no longer leave a half-restored dependency that the fetch takes as installed and that is then uploaded to the shared build cache (#11002).
+- b091dee: The coordinator stops holding every streamed CI log line in memory, and caps what it accepts inbound (#11028).
+  - `TaskLogBuffer` keys lines by `{session_id, run_id, task_id}`: `buffer/5`, `get_output/4` and the new `delete_task/4` take the run, and `cleanup/3` drops one run instead of the whole session, so runs sharing a session (the dispatch jobs of one CI workflow run) no longer read or delete each other's lines. A line with no known run (after a reconnect) is kept under a nil run and still read with the run's output. `ChannelHelpers.try_assign_task` records the assignment on the socket (`current_assignment`), and `ChannelHelpers.log_run_id/2` reads it back. It also gains `memory_bytes/1` and a hard `:max_bytes` cap (default 128 MiB) on the table's real memory: ETS plus the off-heap bytes of the lines it holds. Lines are stored as copies, so a line no longer keeps its whole WebSocket frame alive. At the cap, new lines are dropped, the task's output ends with `[dxcore: N log lines dropped, buffer full]`, and the next sweep logs and reports how many (`dropped` and `memory_bytes` in the `[:dxcore, :task_log_buffer, :sweep]` measurements). On the night of the kills a line cost about 278 bytes with its frame, and CI streamed 3.6 to 3.9 million lines inside the buffer's 2-hour TTL, up to 1 GB across the two pods.
+  - The SaaS agent channel drops a task's lines once the scheduler accepts its exit 0 (a rejected report deletes nothing), since only a failed task's output is read, and cuts any line over 16 KiB at a UTF-8 boundary. A malformed `task_log` or `task_result`, including a non-object payload, is logged and dropped.
+  - `runs.graph_json` is no longer decoded by every run query (`load_in_query: false`; 1.8 MB a run for the full-repo graph, so 184 MB for a dashboard showing 100 running runs). Rehydration reads it explicitly through `Runs.load_graph_json/1`.
+  - Socket frames are capped: 8 MiB on `/dispatcher` (the full-repo graph is 0.85 MB), 1 MiB on `/agent` and `/live`. An over-cap frame closes the socket with 1009 instead of being read.
+  - Any inbound socket message or HTTP body of 256 KiB or more is logged with its size and source and emitted as `[:dxcore, :inbound, :large_message]`.
+  - The OSS agent channel files task-log lines per run and cleans up per run on completion, through the same `TaskLogBuffer` API.
+
+- Updated dependencies [888d150]
+- Updated dependencies [b091dee]
+  - @repo/dxcore-core@0.9.0
+
 ## 0.5.16
 
 ### Patch Changes
