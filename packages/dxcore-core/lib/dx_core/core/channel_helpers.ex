@@ -23,11 +23,25 @@ defmodule DxCore.Core.ChannelHelpers do
   newly-registered Scheduler is not yet visible in a remote pod's local
   CRDT view by the time the `tasks_available` broadcast arrives there.
 
+  `log_run_id/2` names the run a `task_log` line belongs to, from the
+  assignment `try_assign_task` recorded on the socket.
+
   `get_run_id/1` is a regular function — call it as
   `DxCore.Core.ChannelHelpers.get_run_id(scheduler)`.
   """
 
   alias DxCore.Core.Scheduler
+
+  @doc """
+  The run id of the socket's current assignment when it is for `task_id`,
+  else nil (e.g. a line that reached a channel with no assignment recorded,
+  after a reconnect). `TaskLogBuffer` keeps nil-run lines where the run's
+  failure output still finds them.
+  """
+  def log_run_id(%{current_assignment: %{task_id: task_id, run_id: run_id}}, task_id),
+    do: run_id
+
+  def log_run_id(_assigns, _task_id), do: nil
 
   @doc """
   Safely retrieves the run_id from a scheduler process.
@@ -99,9 +113,12 @@ defmodule DxCore.Core.ChannelHelpers do
               "agent_id" => agent_id
             })
 
+            # The agent runs one task at a time and its `task_log` pushes carry
+            # no run id, so the channel files them under this assignment.
             socket
             |> assign(:current_scheduler, pid)
             |> assign(:current_run_id, run_id)
+            |> assign(:current_assignment, %{task_id: task.task_id, run_id: run_id})
 
           nil ->
             socket
