@@ -34,7 +34,10 @@ defmodule DxCore.Agents.MixProject do
   defp deps do
     [
       {:dxcore_core, path: "../../packages/dxcore-core"},
-      {:phoenix, "~> 1.8.1"},
+      # 1.8.16 carries the 1.8.6 and 1.8.9 security fixes and stops the LongPoll
+      # fallback reconnecting a socket LiveView closed for a navigation, which
+      # reloaded the old page over the new one.
+      {:phoenix, "~> 1.8.16"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},
