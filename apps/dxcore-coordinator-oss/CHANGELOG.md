@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.18
+
+### Patch Changes
+
+- 2bcb63d: Phoenix 1.8.3 → 1.8.16 (#11901), for the socket security fixes from 1.8.6 and 1.8.9: CVE-2026-32689 (LongPoll memory exhaustion), CVE-2026-56811 (unbounded channels per connection, now capped at 100) and CVE-2026-56812 (Presence key collision).
+
 ## 0.5.17
 
 ### Patch Changes
