@@ -139,7 +139,7 @@ defmodule DxCore.Core.ChannelHelpers do
 
           case socket.assigns[:current_scheduler] do
             nil -> :ok
-            scheduler -> DxCore.Core.Scheduler.reassign_task(scheduler, agent_id)
+            scheduler -> release_or_hold(socket, scheduler, agent_id)
           end
 
           # Notify schedulers of topology change
@@ -155,6 +155,24 @@ defmodule DxCore.Core.ChannelHelpers do
         end
 
         :ok
+      end
+
+      # An agent that says in `agent_ready` what it is running
+      # (`:reports_current_task`) keeps its task across a dropped connection
+      # for the scheduler's lease grace window: a pod drain closes the sockets
+      # of busy agents, and releasing then hands the task to a second agent.
+      # When it rejoins it names its task (kept) or reports idle (released).
+      # Other agents release at once, since one that rejoins idle without
+      # saying so would leave the task stranded on it. A scheduler that is
+      # gone (Horde moved it, or the run ended) has nothing to release.
+      defp release_or_hold(socket, scheduler, agent_id) do
+        if socket.assigns[:reports_current_task] do
+          DxCore.Core.Scheduler.hold_agent(scheduler, agent_id)
+        else
+          DxCore.Core.Scheduler.reassign_task(scheduler, agent_id)
+        end
+      catch
+        :exit, _reason -> :ok
       end
 
       # Wake idle agents on the session's agent topic. Idempotent and safe to

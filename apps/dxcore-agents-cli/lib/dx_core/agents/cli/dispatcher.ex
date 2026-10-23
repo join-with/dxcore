@@ -32,7 +32,10 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     :shard_config,
     :failure_strategy,
     :org_slug,
-    connected_agents: 0
+    connected_agents: 0,
+    # Tasks whose result has been printed, so a replayed snapshot and the live
+    # event for the same task report it once.
+    finished: MapSet.new()
   ]
 
   @default_timeout_s 900
@@ -174,9 +177,37 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   def handle_info({:channel_message, _topic, "task_completed", payload}, state) do
-    status = if payload["exit_code"] == 0, do: "OK", else: "FAIL(#{payload["exit_code"]})"
-    IO.puts("[coordinator] Task #{payload["task_id"]} #{status} (#{payload["duration_ms"]}ms)")
-    {:noreply, state, state.timeout_ms}
+    task_id = payload["task_id"]
+
+    if MapSet.member?(state.finished, task_id) do
+      {:noreply, state, state.timeout_ms}
+    else
+      status = if payload["exit_code"] == 0, do: "OK", else: "FAIL(#{payload["exit_code"]})"
+      IO.puts("[coordinator] Task #{task_id} #{status} (#{payload["duration_ms"]}ms)")
+      {:noreply, %{state | finished: MapSet.put(state.finished, task_id)}, state.timeout_ms}
+    end
+  end
+
+  # Sent by the coordinator when this dispatcher rejoins its run (after a
+  # reconnect or a coordinator restart): the run's summary so far. Tasks
+  # already reported are skipped; a finished run ends the dispatch exactly as
+  # `run_complete` does.
+  def handle_info({:channel_message, _topic, "run_snapshot", payload}, state) do
+    case parse_snapshot(payload) do
+      {:ok, status, tasks, pending} ->
+        state = report_snapshot_tasks(tasks, state)
+
+        IO.puts(
+          "[dispatcher:#{state.session_id}] Run #{state.run_id} resumed: " <>
+            "#{MapSet.size(state.finished)} tasks finished, #{pending} pending (#{status})"
+        )
+
+        finish_or_wait(status, payload, state)
+
+      :error ->
+        IO.puts("[dispatcher:#{state.session_id}] Ignoring malformed run_snapshot")
+        {:noreply, state, state.timeout_ms}
+    end
   end
 
   def handle_info({:channel_message, _topic, "task_failed", payload}, state) do
@@ -185,18 +216,8 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   def handle_info({:channel_message, _topic, "run_complete", payload}, state) do
-    IO.puts("[coordinator] Run #{payload["run_id"]} complete: #{payload["status"]}")
-
-    case payload["summary"] do
-      nil -> :ok
-      summary -> IO.puts(format_summary(summary))
-    end
-
-    if payload["status"] == "failed" do
-      {:stop, {:shutdown, :failed}, state}
-    else
-      {:stop, :normal, state}
-    end
+    print_completion(payload)
+    finish(payload["status"], state)
   end
 
   def handle_info({:channel_message, _topic, "task_log", payload}, state) do
@@ -258,6 +279,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
           "[dispatcher:#{state.session_id}] Run #{state.run_id} submitted: #{info["total_tasks"]} tasks (#{info["cached_tasks"]} cached)"
         )
 
+        # From now on every rejoin asks for this run, which the coordinator
+        # then replays; it refuses the rejoin if it has no such run.
+        DxCore.Agents.WsClient.set_join_params(state.client, %{"resume" => true})
         {:noreply, %{state | tasks: nil}, state.timeout_ms}
 
       {:error, reason} ->
@@ -278,6 +302,15 @@ defmodule DxCore.Agents.CLI.Dispatcher do
       ) do
     IO.puts("[dispatcher:#{state.session_id}] Session already finished, exiting")
     {:stop, :normal, state}
+  end
+
+  def handle_info({:topic_closed, _topic, {:failed_to_join, %{"reason" => reason}}}, state)
+      when reason in ["run_not_found", "invalid_join_params"] do
+    IO.puts(
+      "[dispatcher:#{state.session_id}] Coordinator refused to resume run #{state.run_id}: #{reason}"
+    )
+
+    {:stop, {:shutdown, :resume_refused}, state}
   end
 
   def handle_info({:topic_closed, _topic, _reason}, state) do
@@ -310,6 +343,69 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     IO.puts("[dispatcher:#{state.session_id}] Unexpected message: #{inspect(msg)}")
     {:noreply, state, state.timeout_ms}
   end
+
+  @finished_statuses ["done", "failed", "skipped"]
+
+  defp parse_snapshot(%{"status" => status, "summary" => %{"tasks" => tasks}} = payload)
+       when is_binary(status) and is_list(tasks) do
+    if Enum.all?(
+         tasks,
+         &match?(%{"task_id" => id, "status" => s} when is_binary(id) and is_binary(s), &1)
+       ) do
+      pending = Map.get(payload, "pending")
+      {:ok, status, tasks, if(is_integer(pending), do: pending, else: "?")}
+    else
+      :error
+    end
+  end
+
+  defp parse_snapshot(_payload), do: :error
+
+  defp report_snapshot_tasks(tasks, state) do
+    Enum.reduce(tasks, state, fn task, acc ->
+      task_id = task["task_id"]
+
+      cond do
+        task["cached"] == true or task["status"] not in @finished_statuses ->
+          acc
+
+        MapSet.member?(acc.finished, task_id) ->
+          acc
+
+        true ->
+          IO.puts("[coordinator] Task #{task_id} #{snapshot_status(task)} (replayed)")
+          %{acc | finished: MapSet.put(acc.finished, task_id)}
+      end
+    end)
+  end
+
+  defp snapshot_status(%{"status" => "done"}), do: "OK"
+  defp snapshot_status(%{"status" => "skipped"}), do: "SKIPPED"
+  defp snapshot_status(%{"exit_code" => code}) when is_integer(code), do: "FAIL(#{code})"
+  defp snapshot_status(_task), do: "FAIL"
+
+  defp finish_or_wait(status, payload, state)
+       when status in ["complete", "failed", "cancelled"] do
+    print_completion(payload)
+    finish(status, state)
+  end
+
+  defp finish_or_wait(_status, _payload, state), do: {:noreply, state, state.timeout_ms}
+
+  defp print_completion(payload) do
+    IO.puts("[coordinator] Run #{payload["run_id"]} complete: #{payload["status"]}")
+
+    case payload["summary"] do
+      %{"tasks" => tasks, "counts" => counts} = summary when is_list(tasks) and is_map(counts) ->
+        IO.puts(format_summary(summary))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp finish("failed", state), do: {:stop, {:shutdown, :failed}, state}
+  defp finish(_status, state), do: {:stop, :normal, state}
 
   # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
   # `parse_task/1`, kept equal by dispatcher_test.exs). A build system's task

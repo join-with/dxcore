@@ -131,7 +131,11 @@ defmodule DxCore.Core.Scheduler.TopologyEvaluator do
 
   # ── Agent enumeration ──────────────────────────────────────────────
 
-  defp list_agents(state) do
+  @doc """
+  The agents connected to the scheduler's session, from the context's
+  `:agent_lister` (`[]` when there is none, as in the OSS coordinator).
+  """
+  def list_agents(state) do
     case Map.get(state.context, :agent_lister) do
       nil -> []
       fun when is_function(fun, 1) -> fun.(state)

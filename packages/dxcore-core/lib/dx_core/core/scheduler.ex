@@ -13,7 +13,12 @@ defmodule DxCore.Core.Scheduler do
   all plugin callbacks for tenant-scoped metadata.
   """
 
-  use GenServer
+  # :transient: a scheduler that gives up on loading its run's state stops
+  # with `{:shutdown, _}` and is not restarted, so it cannot crash-loop the
+  # supervisor every run's scheduler shares (#11994). The run is rebuilt from
+  # the database on the next agent result or dispatcher rejoin. A crash is
+  # still restarted.
+  use GenServer, restart: :transient
 
   require Logger
 
@@ -72,6 +77,16 @@ defmodule DxCore.Core.Scheduler do
 
   @default_registry DxCore.Core.SchedulerRegistry
 
+  # Agents rejoin within a second of a restart, but on a drain their sockets
+  # stay on the old pod for its drain wait (10 s) while the scheduler has
+  # already moved, so the window has to outlast that.
+  @default_lease_grace_ms 30_000
+
+  # Waits between attempts to load the run's state. They add up to 3.1 s,
+  # under GenServer.call's 5 s default, so a caller that arrives meanwhile
+  # waits instead of timing out.
+  @default_state_load_backoff_ms [100, 200, 400, 800, 1_600]
+
   # Registry module used for `{:via, _, _}` naming, lookup, and select. Defaults
   # to the local `Registry` (OSS coordinator). SaaS overrides via
   # `config :dxcore_core, :scheduler_via_module, Horde.Registry` so the same
@@ -101,10 +116,37 @@ defmodule DxCore.Core.Scheduler do
     same graph the original ran with.
   - `:rehydrate_from` (default `[]`) — list of result maps with the shape
     `%{task_id: String.t(), status: :done | :failed | :skipped, agent_id: String.t() | nil,
-       duration_ms: integer() | nil}`. Each entry is applied to the corresponding task in `graph`,
-    setting `status`, `duration_ms`, and `completed_by`. Unknown task_ids (cache flips) are skipped.
+       duration_ms: integer() | nil}`, plus an optional `exit_code: integer() | nil`. Each entry is
+    applied to the corresponding task in `graph`, setting `status`, `duration_ms`, `exit_code`
+    and `completed_by`. Unknown task_ids (cache flips) are skipped.
     After applying results, dependents of any `:failed` rehydrated task are marked `:skipped`.
     When non-empty, the scheduler also assumes topology has settled.
+  - `:state_loader` (default: the `:dxcore_core, :scheduler_state_loader` app
+    env, else `nil`) — `{module, function, extra_args}` called as
+    `apply(module, function, [run_id | extra_args])` every time the scheduler
+    starts, before it handles any message. It returns
+    `{:ok, %{results: results, leases: leases}}`: `results` in the
+    `:rehydrate_from` shape, and `leases` as
+    `%{task_id: String.t(), agent_id: String.t(), assigned_at: DateTime.t() | nil}`
+    for tasks handed to an agent. A supervisor that restarts the scheduler
+    (Horde, when it moves the process to another node on a drain or a node
+    loss) restarts it from the child spec it was first started with, so the
+    loader, not the start options, is what carries the run's progress across
+    the restart. The app env default covers a scheduler whose child spec was
+    built by code that did not pass the option yet. A persisted result wins
+    over a `:rehydrate_from` entry for the same task, which only fills in
+    tasks with no persisted result. A failed load (the loader raises,
+    exits or returns another shape) is retried after each wait in
+    `:state_load_backoff_ms` (default #{inspect(@default_state_load_backoff_ms)});
+    when every attempt fails the scheduler stops with
+    `{:shutdown, {:state_load_failed, reason}}` instead of starting from the
+    bare graph, which would hand finished tasks out again and reject the
+    results of in-flight ones.
+  - `:lease_grace_ms` (default #{@default_lease_grace_ms}) — how long a held
+    lease is kept for an agent that is not connected: one restored by the
+    loader, or one of an agent whose connection dropped (`hold_agent/2`).
+    Once its window has passed, a held lease whose agent is absent is
+    released; one whose agent is back is checked again a window later.
   """
   def start_link(opts) do
     graph = Keyword.fetch!(opts, :graph)
@@ -124,10 +166,20 @@ defmodule DxCore.Core.Scheduler do
     org_id = Keyword.get(opts, :org_id)
     name = {:via, via_module, {registry, {org_id, session_id, run_id}}}
 
+    restore = %{
+      state_loader:
+        Keyword.get_lazy(opts, :state_loader, fn ->
+          Application.get_env(:dxcore_core, :scheduler_state_loader)
+        end),
+      lease_grace_ms: Keyword.get(opts, :lease_grace_ms, @default_lease_grace_ms),
+      state_load_backoff_ms:
+        Keyword.get(opts, :state_load_backoff_ms, @default_state_load_backoff_ms)
+    }
+
     GenServer.start_link(
       __MODULE__,
-      {graph, run_id, session_id, plugin, context, failure_strategy, skip_expand?,
-       rehydrate_from},
+      {graph, run_id, session_id, plugin, context, failure_strategy, skip_expand?, rehydrate_from,
+       restore},
       name: name
     )
   end
@@ -192,9 +244,27 @@ defmodule DxCore.Core.Scheduler do
     GenServer.call(pid, {:report_result, task_id, agent_id, result})
   end
 
-  @doc "Return any task assigned to `agent_id` back to the frontier."
-  def reassign_task(pid, agent_id) do
-    GenServer.call(pid, {:reassign_task, agent_id})
+  @doc "Release every task assigned to `agent_id` (see `release_agent/3`)."
+  def reassign_task(pid, agent_id), do: release_agent(pid, agent_id)
+
+  @doc """
+  The connection of `agent_id` dropped, but the agent may still be running
+  its tasks (a pod drain closes the sockets of busy agents). Keep them on it
+  for `:lease_grace_ms`, then release each one whose agent has not come back.
+  An agent that comes back says what it runs (`release_agent/3`).
+  """
+  def hold_agent(pid, agent_id) do
+    GenServer.call(pid, {:hold_agent, agent_id})
+  end
+
+  @doc """
+  Release every task assigned to `agent_id` except `keep_task_id`: each goes
+  back to the frontier, or is skipped once a `:fail_fast` run has failed.
+  Used when the agent disconnects (`keep_task_id` nil) and when it announces
+  what it is running (the task it names is kept).
+  """
+  def release_agent(pid, agent_id, keep_task_id \\ nil) do
+    GenServer.call(pid, {:release_agent, agent_id, keep_task_id})
   end
 
   @doc "Return the current scheduler status."
@@ -226,7 +296,7 @@ defmodule DxCore.Core.Scheduler do
   @impl true
   def init(
         {%TaskGraph{} = graph, run_id, session_id, plugin, context, failure_strategy,
-         skip_expand?, rehydrate_from}
+         skip_expand?, rehydrate_from, restore}
       ) do
     # Let the plugin expand the graph before scheduling, unless caller already did so
     graph =
@@ -236,35 +306,69 @@ defmodule DxCore.Core.Scheduler do
         plugin.expand_graph(graph, context)
       end
 
-    tasks =
-      graph
-      |> build_initial_tasks(run_id)
-      |> apply_rehydration(rehydrate_from, failure_strategy)
-
-    frontier = compute_frontier(tasks)
-
     state = %{
       run_id: run_id,
       session_id: session_id,
       plugin: plugin,
       context: context,
-      tasks: tasks,
+      tasks: build_initial_tasks(graph, run_id),
       agents: %{},
-      frontier: frontier,
+      frontier: MapSet.new(),
       failure_strategy: failure_strategy,
-      failed_fast: failed_fast_from_results(rehydrate_from, failure_strategy),
+      failed_fast: false,
       topology_check: Map.get(context, :topology_check, "infer"),
       expected_agents: get_in(context, [:topology, "agents"]),
       topology_timer: nil,
-      # Rehydrated runs assume topology has already settled — fresh submits
-      # don't pass rehydrate_from and still use the live topology timer.
-      # The agent channel always passes a non-empty rehydrate_from list
-      # (the incoming result is baked in), so this branch is reached
-      # whenever we rebuild a scheduler post-restart.
-      topology_settled: rehydrate_from != []
+      topology_settled: false,
+      # task_id => {agent_id, deadline}: leases kept on an agent that is not
+      # connected, released after the deadline if the agent is still absent.
+      held_leases: %{},
+      lease_timer: nil,
+      lease_grace_ms: restore.lease_grace_ms
     }
 
-    {:ok, state}
+    # The persisted state is loaded in handle_continue, which runs before any
+    # message is handled, so a supervisor starting many schedulers at once
+    # (Horde moving a drained node's runs) is not held up by the queries.
+    {:ok, state,
+     {:continue, {:restore, rehydrate_from, restore.state_loader, restore.state_load_backoff_ms}}}
+  end
+
+  @impl true
+  def handle_continue({:restore, rehydrate_from, state_loader, backoff_ms}, state) do
+    case load_state_retrying(state_loader, state.run_id, backoff_ms) do
+      {:ok, loaded} ->
+        {:noreply, restore(state, loaded, rehydrate_from)}
+
+      {:error, reason} ->
+        {:stop, {:shutdown, {:state_load_failed, reason}}, state}
+    end
+  end
+
+  defp restore(state, %{results: loaded_results, leases: leases}, rehydrate_from) do
+    results = merge_results(loaded_results, rehydrate_from)
+
+    tasks =
+      state.tasks
+      |> restore_leases(leases)
+      |> apply_rehydration(results, state.failure_strategy)
+
+    restored =
+      for {task_id, %TaskState{status: :running, assigned_to: agent_id}} <- tasks,
+          do: {task_id, agent_id}
+
+    state = %{
+      state
+      | tasks: tasks,
+        agents: agents_from_tasks(tasks),
+        frontier: compute_frontier(tasks),
+        failed_fast: failed_fast_from_results(results, state.failure_strategy),
+        # A scheduler rebuilt from persisted progress assumes topology has
+        # already settled; a fresh submit has none and uses the live timer.
+        topology_settled: results != [] or restored != []
+    }
+
+    hold_leases(state, restored)
   end
 
   @impl true
@@ -297,26 +401,153 @@ defmodule DxCore.Core.Scheduler do
             frontier: MapSet.delete(state.frontier, task_id)
         }
 
+        notify_plugin_task_assigned(state, updated_task, agent_info)
         {:reply, {:ok, updated_task}, new_state}
     end
   end
 
+  # An agent runs one task at a time, so once it reports a result it holds
+  # nothing else: any other task still marked as running on it was pushed to
+  # it while it was busy (a reconnecting agent announces itself even mid-task
+  # and ignores a second assignment), and it goes back to the frontier.
   @impl true
-  def handle_call({:report_result, task_id, agent_id, {result_atom, exit_code}}, from, state)
-      when result_atom in [:success, :failed] do
+  def handle_call({:report_result, task_id, agent_id, result}, _from, state) do
+    {reply, state} = do_report_result(task_id, agent_id, result, state)
+    {:reply, reply, release_tasks_held_by(state, agent_id, task_id, :reported_other)}
+  end
+
+  @impl true
+  def handle_call({:hold_agent, agent_id}, _from, state) do
+    held =
+      for {task_id, %TaskState{status: :running, assigned_to: ^agent_id}} <- state.tasks,
+          do: {task_id, agent_id}
+
+    {:reply, :ok, hold_leases(state, held)}
+  end
+
+  @impl true
+  def handle_call({:release_agent, agent_id, keep_task_id}, _from, state) do
+    {:reply, :ok, release_tasks_held_by(state, agent_id, keep_task_id, :released)}
+  end
+
+  @impl true
+  def handle_call(:summary, _from, state) do
+    {:reply, build_summary(state), state}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    run_status = compute_run_status(state.tasks, state.failed_fast)
+
+    reply = %{
+      run_id: state.run_id,
+      run_status: run_status,
+      tasks: state.tasks,
+      agents: state.agents,
+      frontier: state.frontier
+    }
+
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call(:dispatcher_topic, _from, state) do
+    {:reply, Map.get(state.context, :dispatcher_topic), state}
+  end
+
+  @impl true
+  def handle_cast(:check_topology, state) do
+    alias DxCore.Core.Scheduler.TopologyEvaluator
+    {:noreply, TopologyEvaluator.evaluate(state)}
+  end
+
+  @impl true
+  def handle_info(:check_held_leases, state) do
+    now = System.monotonic_time(:millisecond)
+
+    present =
+      state
+      |> DxCore.Core.Scheduler.TopologyEvaluator.list_agents()
+      |> MapSet.new(& &1.agent_id)
+
+    # A lease that no longer stands (the task finished, or went to another
+    # agent) is dropped; one whose window has not passed waits.
+    {due, waiting} =
+      state.held_leases
+      |> Enum.filter(fn {task_id, {agent_id, _deadline}} ->
+        match?(%TaskState{status: :running, assigned_to: ^agent_id}, state.tasks[task_id])
+      end)
+      |> Enum.split_with(fn {_task_id, {_agent_id, deadline}} -> deadline <= now end)
+
+    {released, kept} =
+      Enum.split_with(due, fn {_task_id, {agent_id, _}} ->
+        not MapSet.member?(present, agent_id)
+      end)
+
+    held =
+      Map.new(waiting)
+      |> Map.merge(
+        Map.new(kept, fn {task_id, {agent_id, _}} ->
+          {task_id, {agent_id, now + state.lease_grace_ms}}
+        end)
+      )
+
+    state = %{state | held_leases: held, lease_timer: nil}
+
+    state =
+      Enum.reduce(released, state, fn {task_id, {agent_id, _deadline}}, acc ->
+        Logger.warning(
+          "Releasing task #{task_id} of run #{state.run_id}: its agent " <>
+            "#{inspect(agent_id)} has not come back"
+        )
+
+        release_task(acc, task_id)
+      end)
+
+    state = schedule_lease_check(state)
+    if released != [], do: broadcast_tasks_available(state)
+
+    # One event per check: which held leases it released (agent absent past
+    # the window), kept (agent back; a new window starts) and left waiting
+    # (window not over yet).
+    :telemetry.execute(
+      [:dxcore, :scheduler, :held_leases_checked],
+      %{released: length(released), kept: length(kept)},
+      %{
+        run_id: state.run_id,
+        checked_at: now,
+        released: Enum.map(released, &elem(&1, 0)),
+        kept: Enum.map(kept, &elem(&1, 0)),
+        waiting: Enum.map(waiting, &elem(&1, 0))
+      }
+    )
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(:topology_stabilized, state) do
+    alias DxCore.Core.Scheduler.TopologyEvaluator
+    new_state = %{state | topology_settled: true, topology_timer: nil}
+    {:noreply, TopologyEvaluator.evaluate_assignability(new_state)}
+  end
+
+  # ── Private helpers ─────────────────────────────────────────────────
+
+  defp do_report_result(task_id, agent_id, {result_atom, exit_code}, state)
+       when result_atom in [:success, :failed] do
     with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
            Map.fetch(state.tasks, task_id) do
       duration_ms = compute_duration(task_state)
       updated_task = %{task_state | exit_code: exit_code, duration_ms: duration_ms}
       state = %{state | tasks: Map.put(state.tasks, task_id, updated_task)}
-      handle_call({:report_result, task_id, agent_id, result_atom}, from, state)
+      do_report_result(task_id, agent_id, result_atom, state)
     else
       result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
 
-  @impl true
-  def handle_call({:report_result, task_id, agent_id, :success}, _from, state) do
+  defp do_report_result(task_id, agent_id, :success, state) do
     with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
            Map.fetch(state.tasks, task_id) do
       duration_ms = task_state.duration_ms || compute_duration(task_state)
@@ -345,14 +576,13 @@ defmodule DxCore.Core.Scheduler do
       # Notify plugin of task completion (wrapped in try/catch for resilience)
       notify_plugin_task_complete(state, task_state, :success)
 
-      {:reply, {:ok, compute_run_status(tasks, state.failed_fast)}, new_state}
+      {{:ok, compute_run_status(tasks, state.failed_fast)}, new_state}
     else
       result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
 
-  @impl true
-  def handle_call({:report_result, task_id, agent_id, :failed}, _from, state) do
+  defp do_report_result(task_id, agent_id, :failed, state) do
     with {:ok, %TaskState{assigned_to: ^agent_id, status: :running} = task_state} <-
            Map.fetch(state.tasks, task_id) do
       duration_ms = task_state.duration_ms || compute_duration(task_state)
@@ -397,73 +627,11 @@ defmodule DxCore.Core.Scheduler do
       # Notify plugin of task completion (wrapped in try/catch for resilience)
       notify_plugin_task_complete(state, task_state, :failed)
 
-      {:reply, {:ok, compute_run_status(tasks, failed_fast)}, new_state}
+      {{:ok, compute_run_status(tasks, failed_fast)}, new_state}
     else
       result -> reply_ack_rejection(result, state, agent_id, task_id)
     end
   end
-
-  @impl true
-  def handle_call({:reassign_task, agent_id}, _from, state) do
-    # Find the task currently assigned to this agent
-    task_entry =
-      Enum.find(state.tasks, fn {_id, t} ->
-        t.assigned_to == agent_id and t.status == :running
-      end)
-
-    case task_entry do
-      nil ->
-        {:reply, :ok, state}
-
-      {task_id, task_state} ->
-        updated_task = %{task_state | status: :pending, assigned_to: nil}
-        tasks = Map.put(state.tasks, task_id, updated_task)
-        agents = Map.delete(state.agents, agent_id)
-        frontier = compute_frontier(tasks)
-
-        {:reply, :ok, %{state | tasks: tasks, agents: agents, frontier: frontier}}
-    end
-  end
-
-  @impl true
-  def handle_call(:summary, _from, state) do
-    {:reply, build_summary(state), state}
-  end
-
-  @impl true
-  def handle_call(:status, _from, state) do
-    run_status = compute_run_status(state.tasks, state.failed_fast)
-
-    reply = %{
-      run_id: state.run_id,
-      run_status: run_status,
-      tasks: state.tasks,
-      agents: state.agents,
-      frontier: state.frontier
-    }
-
-    {:reply, reply, state}
-  end
-
-  @impl true
-  def handle_call(:dispatcher_topic, _from, state) do
-    {:reply, Map.get(state.context, :dispatcher_topic), state}
-  end
-
-  @impl true
-  def handle_cast(:check_topology, state) do
-    alias DxCore.Core.Scheduler.TopologyEvaluator
-    {:noreply, TopologyEvaluator.evaluate(state)}
-  end
-
-  @impl true
-  def handle_info(:topology_stabilized, state) do
-    alias DxCore.Core.Scheduler.TopologyEvaluator
-    new_state = %{state | topology_settled: true, topology_timer: nil}
-    {:noreply, TopologyEvaluator.evaluate_assignability(new_state)}
-  end
-
-  # ── Private helpers ─────────────────────────────────────────────────
 
   defp compute_duration(%{started_at_mono: nil}), do: 0
 
@@ -472,12 +640,12 @@ defmodule DxCore.Core.Scheduler do
 
   defp reply_ack_rejection({:ok, %TaskState{} = t}, state, agent_id, task_id) do
     log_and_emit_ack_rejected(agent_id, task_id, state.run_id, :wrong_agent_or_status, t)
-    {:reply, {:error, :not_assigned}, state}
+    {{:error, :not_assigned}, state}
   end
 
   defp reply_ack_rejection(:error, state, agent_id, task_id) do
     log_and_emit_ack_rejected(agent_id, task_id, state.run_id, :unknown_task, nil)
-    {:reply, {:error, :unknown_task}, state}
+    {{:error, :unknown_task}, state}
   end
 
   defp log_and_emit_ack_rejected(agent_id, task_id, run_id, reason, task) do
@@ -523,6 +691,200 @@ defmodule DxCore.Core.Scheduler do
     end
   end
 
+  defp notify_plugin_task_assigned(state, task, agent_info),
+    do: notify_plugin(state, :on_task_assigned, [task, agent_info, state.context])
+
+  # Calls an optional plugin callback; a failure is logged and ignored.
+  defp notify_plugin(state, callback, args) do
+    if Code.ensure_loaded?(state.plugin) and
+         function_exported?(state.plugin, callback, length(args)) do
+      try do
+        apply(state.plugin, callback, args)
+      rescue
+        e -> Logger.warning("Plugin #{callback} failed: #{inspect(e)}")
+      catch
+        kind, reason ->
+          Logger.warning("Plugin #{callback} failed (#{kind}): #{inspect(reason)}")
+      end
+    end
+
+    :ok
+  end
+
+  # Loads the run's persisted progress, retrying a failure after each wait
+  # in `backoff_ms`. Every failed attempt is logged and counted.
+  defp load_state_retrying(loader, run_id, backoff_ms) do
+    case load_state(loader, run_id) do
+      {:ok, loaded} ->
+        {:ok, loaded}
+
+      {:error, reason} ->
+        state_load_failed(run_id, reason, backoff_ms)
+
+        case backoff_ms do
+          [] ->
+            {:error, reason}
+
+          [wait | rest] ->
+            Process.sleep(wait)
+            load_state_retrying(loader, run_id, rest)
+        end
+    end
+  end
+
+  defp load_state(nil, _run_id), do: {:ok, %{results: [], leases: []}}
+
+  defp load_state({module, function, args}, run_id)
+       when is_atom(module) and is_atom(function) and is_list(args) do
+    case apply(module, function, [run_id | args]) do
+      {:ok, %{results: results, leases: leases}} when is_list(results) and is_list(leases) ->
+        {:ok, %{results: results, leases: leases}}
+
+      other ->
+        {:error, {:bad_return, other}}
+    end
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp load_state(loader, _run_id), do: {:error, {:bad_loader, loader}}
+
+  defp state_load_failed(run_id, reason, backoff_ms) do
+    next = if backoff_ms == [], do: "giving up", else: "retrying in #{hd(backoff_ms)} ms"
+
+    Logger.error(
+      "Scheduler for run #{run_id} could not load its state (#{next}): #{inspect(reason)}"
+    )
+
+    :telemetry.execute([:dxcore, :scheduler, :state_load_failed], %{count: 1}, %{
+      run_id: run_id,
+      final: backoff_ms == []
+    })
+  end
+
+  defp merge_results(loaded, explicit) do
+    loaded_ids = MapSet.new(loaded, & &1.task_id)
+    loaded ++ Enum.reject(explicit, &MapSet.member?(loaded_ids, &1.task_id))
+  end
+
+  # A lease puts a task that has no result back on the agent that was running
+  # it, so its result is accepted and nobody else is handed the same work.
+  defp restore_leases(tasks, leases) do
+    now_mono = System.monotonic_time(:millisecond)
+
+    Enum.reduce(leases, tasks, fn lease, acc ->
+      with %{task_id: task_id, agent_id: agent_id} when is_binary(agent_id) <- lease,
+           %{^task_id => %TaskState{status: :pending} = task} <- acc do
+        Map.put(acc, task_id, %{
+          task
+          | status: :running,
+            assigned_to: agent_id,
+            agent_info: %AgentInfo{agent_id: agent_id},
+            started_at_mono: now_mono - elapsed_ms(Map.get(lease, :assigned_at))
+        })
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp elapsed_ms(%DateTime{} = at),
+    do: max(DateTime.diff(DateTime.utc_now(), at, :millisecond), 0)
+
+  defp elapsed_ms(_), do: 0
+
+  defp agents_from_tasks(tasks) do
+    for {task_id, %TaskState{status: :running, assigned_to: agent_id}} <- tasks,
+        is_binary(agent_id),
+        into: %{},
+        do: {agent_id, task_id}
+  end
+
+  # Every lease in `held` gets a fresh window of `:lease_grace_ms`.
+  defp hold_leases(state, []), do: state
+
+  defp hold_leases(state, held) do
+    deadline = System.monotonic_time(:millisecond) + state.lease_grace_ms
+
+    held_leases =
+      Enum.reduce(held, state.held_leases, fn {task_id, agent_id}, acc ->
+        Map.put(acc, task_id, {agent_id, deadline})
+      end)
+
+    schedule_lease_check(%{state | held_leases: held_leases})
+  end
+
+  # One timer at a time, for the earliest deadline. A lease added while it
+  # runs has a later deadline (every window is the same length), so the
+  # check it triggers reschedules for that one.
+  defp schedule_lease_check(%{lease_timer: nil, held_leases: held} = state)
+       when map_size(held) > 0 do
+    next = held |> Map.values() |> Enum.map(&elem(&1, 1)) |> Enum.min()
+    delay = max(next - System.monotonic_time(:millisecond), 0)
+    %{state | lease_timer: Process.send_after(self(), :check_held_leases, delay)}
+  end
+
+  defp schedule_lease_check(state), do: state
+
+  defp release_tasks_held_by(state, agent_id, keep_task_id, reason) do
+    state.tasks
+    |> Enum.filter(fn {id, t} ->
+      t.status == :running and t.assigned_to == agent_id and id != keep_task_id
+    end)
+    |> Enum.reduce(state, fn {task_id, _t}, acc ->
+      if reason == :reported_other do
+        Logger.warning(
+          "Task #{task_id} of run #{state.run_id} was held by #{inspect(agent_id)}, " <>
+            "which reported another result; releasing it"
+        )
+      end
+
+      release_task(acc, task_id)
+    end)
+  end
+
+  # A released task goes back to the frontier, or is skipped once a
+  # :fail_fast run has failed (it would never have started then). The
+  # plugin hears of it so a persisted lease does not outlive it.
+  defp release_task(state, task_id) do
+    task = state.tasks[task_id]
+    status = if state.failed_fast, do: :skipped, else: :pending
+    tasks = Map.put(state.tasks, task_id, %{task | status: status, assigned_to: nil})
+
+    holder = task.assigned_to
+
+    agents =
+      case state.agents do
+        %{^holder => ^task_id} -> Map.delete(state.agents, holder)
+        agents -> agents
+      end
+
+    notify_plugin(state, :on_task_released, [task, state.context])
+
+    %{
+      state
+      | tasks: tasks,
+        agents: agents,
+        frontier: compute_frontier(tasks),
+        held_leases: Map.delete(state.held_leases, task_id)
+    }
+  end
+
+  # Wakes the session's idle agents. The payload carries this scheduler's pid
+  # so they skip the registry lookup (#2143).
+  defp broadcast_tasks_available(state) do
+    case state.context do
+      %{endpoint: endpoint, agent_topic: topic} when not is_nil(endpoint) and is_binary(topic) ->
+        endpoint.broadcast(topic, "tasks_available", %{
+          scheduler_pid: self(),
+          run_id: state.run_id
+        })
+
+      _ ->
+        :ok
+    end
+  end
+
   defp build_initial_tasks(%TaskGraph{tasks: graph_tasks}, run_id) do
     Map.new(graph_tasks, fn {id, t} ->
       {id,
@@ -564,6 +926,7 @@ defmodule DxCore.Core.Scheduler do
               task
               | status: r.status,
                 duration_ms: r.duration_ms,
+                exit_code: Map.get(r, :exit_code, task.exit_code),
                 completed_by: r.agent_id,
                 assigned_to: nil
             })
@@ -644,6 +1007,20 @@ defmodule DxCore.Core.Scheduler do
         {id, task}
       end
     end)
+  end
+
+  @doc """
+  The summary a scheduler would give for `graph` with `results` applied, built
+  without starting one: for a run that already finished, whose scheduler is
+  gone.
+  """
+  def offline_summary(%TaskGraph{} = graph, run_id, results, failure_strategy) do
+    tasks = graph |> build_initial_tasks(run_id) |> apply_rehydration(results, failure_strategy)
+
+    build_summary(%{
+      tasks: tasks,
+      failed_fast: failed_fast_from_results(results, failure_strategy)
+    })
   end
 
   defp build_summary(state) do

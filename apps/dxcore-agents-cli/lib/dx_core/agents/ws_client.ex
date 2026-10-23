@@ -35,6 +35,9 @@ defmodule DxCore.Agents.WsClient do
       #   {:disconnected, reason}
 
       WsClient.push(client, "agent_ready", %{"agent_id" => "agent-1"})
+
+  Every (re)join sends the params last set with `set_join_params/2` (`%{}`
+  until then).
   """
 
   use Slipstream
@@ -74,6 +77,11 @@ defmodule DxCore.Agents.WsClient do
     GenServer.call(client, {:push_and_wait, event, payload}, timeout)
   end
 
+  @doc "Set the params sent with every later join, i.e. each rejoin after a reconnect."
+  def set_join_params(client, params) when is_map(params) do
+    GenServer.cast(client, {:set_join_params, params})
+  end
+
   # --- Slipstream Callbacks ---
 
   @impl Slipstream
@@ -85,6 +93,7 @@ defmodule DxCore.Agents.WsClient do
       |> assign(:pending_replies, %{})
       |> assign(:reconnect_timeout_ms, config.reconnect_timeout_ms)
       |> assign(:reconnect_deadline, nil)
+      |> assign(:join_params, %{})
 
     uri = append_token_param(config.url, config.token)
     {:ok, connect!(socket, uri: uri, reconnect_after_msec: @reconnect_after_msec)}
@@ -94,7 +103,7 @@ defmodule DxCore.Agents.WsClient do
   def handle_connect(socket) do
     topic = socket.assigns.topic
     Logger.info("[ws_client] Connected, joining #{topic}")
-    {:ok, join(assign(socket, :reconnect_deadline, nil), topic)}
+    {:ok, join(assign(socket, :reconnect_deadline, nil), topic, socket.assigns.join_params)}
   end
 
   @impl Slipstream
@@ -144,11 +153,26 @@ defmodule DxCore.Agents.WsClient do
     end
   end
 
+  # A channel that crashed on the server (`phx_error`, reason `{:error, _}`)
+  # is rejoined, with backoff, on the same connection; the connection staying
+  # up means no reconnect would ever rejoin it. A refused join is the
+  # caller's to handle.
   @impl Slipstream
   def handle_topic_close(topic, reason, socket) do
     Logger.warning("[ws_client] Topic #{topic} closed: #{inspect(reason)}")
     send(socket.assigns.caller, {:topic_closed, topic, reason})
-    {:ok, socket}
+
+    case reason do
+      {:error, _payload} -> rejoin_topic(socket, topic)
+      _ -> {:ok, socket}
+    end
+  end
+
+  defp rejoin_topic(socket, topic) do
+    case rejoin(socket, topic, socket.assigns.join_params) do
+      {:ok, socket} -> {:ok, socket}
+      {:error, _reason} -> {:ok, socket}
+    end
   end
 
   # --- GenServer handlers for push API ---
@@ -166,6 +190,11 @@ defmodule DxCore.Agents.WsClient do
         Logger.warning("[ws_client] push_and_wait failed: #{inspect(reason)}")
         {:reply, {:error, reason}, socket}
     end
+  end
+
+  @impl Slipstream
+  def handle_cast({:set_join_params, params}, socket) do
+    {:noreply, assign(socket, :join_params, params)}
   end
 
   @impl Slipstream

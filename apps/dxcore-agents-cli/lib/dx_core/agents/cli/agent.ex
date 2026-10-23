@@ -265,9 +265,14 @@ defmodule DxCore.Agents.CLI.Agent do
 
     log(state, "Announcing ready")
 
+    # `current_task` tells the coordinator what this agent is running (nil
+    # when idle), so after a reconnect it keeps that task on this agent,
+    # releases any other it thinks this agent holds, and does not push work
+    # to a busy agent.
     DxCore.Agents.WsClient.push(state.client, "agent_ready", %{
       "agent_id" => state.agent_id,
-      "capabilities" => state.capabilities
+      "capabilities" => state.capabilities,
+      "current_task" => current_task(state)
     })
 
     {:noreply, state}
@@ -315,6 +320,12 @@ defmodule DxCore.Agents.CLI.Agent do
   end
 
   # --- Private Helpers ---
+
+  defp current_task(%{current_task_id: task_id, current_run_id: run_id})
+       when is_binary(task_id) and is_binary(run_id),
+       do: %{"task_id" => task_id, "run_id" => run_id}
+
+  defp current_task(_state), do: nil
 
   defp log(%{agent_id: agent_id, session_id: session_id}, msg) do
     IO.puts("[agent:#{agent_id}@#{session_id}] #{msg}")

@@ -44,5 +44,22 @@ defmodule DxCore.Core.SchedulerPlugin do
               agents :: [AgentInfo.t()]
             ) :: {assignable :: [TaskState.t()], unassignable :: [TaskState.t()]}
 
-  @optional_callbacks [evaluate_assignability: 2]
+  @doc """
+  Called when a task is handed to an agent. A coordinator that persists runs
+  records the lease here, so a scheduler rebuilt after a restart (see the
+  `:state_loader` option of `DxCore.Core.Scheduler`) knows which agent is
+  still running the task. Optional; a failure is logged and ignored.
+  """
+  @callback on_task_assigned(task :: TaskState.t(), agent :: AgentInfo.t(), context :: map()) ::
+              :ok
+
+  @doc """
+  Called when a task is taken off its agent without a result (the agent
+  disconnected, said it is running something else, or did not come back
+  after a restart). A coordinator that records leases drops this one here.
+  Optional; a failure is logged and ignored.
+  """
+  @callback on_task_released(task :: TaskState.t(), context :: map()) :: :ok
+
+  @optional_callbacks [evaluate_assignability: 2, on_task_assigned: 3, on_task_released: 2]
 end

@@ -317,14 +317,56 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
     end
 
-    test "task_completed returns noreply with timeout" do
+    test "task_completed records the task and returns noreply with timeout" do
       state = base_state()
 
       msg =
         {:channel_message, "dispatcher:s1", "task_completed",
          %{"task_id" => "t1", "exit_code" => 0, "duration_ms" => 100}}
 
-      assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(msg, state)
+      assert new_state.finished == MapSet.new(["t1"])
+    end
+
+    test "joined with tasks asks every later rejoin to resume the run" do
+      test_pid = self()
+
+      client =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, {:push_and_wait, "submit_graph", _}} ->
+              GenServer.reply(from, {:ok, %{"total_tasks" => 1, "cached_tasks" => 0}})
+          end
+
+          receive do
+            {:"$gen_cast", msg} -> send(test_pid, {:ws_cast, msg})
+          end
+        end)
+
+      state = base_state(%{client: client, tasks: [%{"taskId" => "t1"}]})
+      assert {:noreply, _, 60_000} = Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
+      assert_receive {:ws_cast, {:set_join_params, %{"resume" => true}}}
+    end
+
+    test "a failed submit does not ask to resume" do
+      client =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, {:push_and_wait, "submit_graph", _}} ->
+              GenServer.reply(from, {:error, :timeout})
+          end
+
+          receive do
+            {:"$gen_cast", msg} -> flunk("unexpected cast #{inspect(msg)}")
+          after
+            100 -> :ok
+          end
+        end)
+
+      state = base_state(%{client: client, tasks: [%{"taskId" => "t1"}]})
+
+      assert {:stop, {:shutdown, :submit_failed}, _} =
+               Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
     end
 
     test "task_failed returns noreply with timeout" do
@@ -775,6 +817,137 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
 
       assert length(read_by_coordinator) == 11
       assert Enum.sort(Dispatcher.wire_fields()) == Enum.sort(read_by_coordinator)
+    end
+  end
+
+  describe "rejoining a run (#11951)" do
+    defp rejoin_state(overrides \\ %{}) do
+      struct!(
+        Dispatcher,
+        Map.merge(
+          %{
+            client: self(),
+            ws_monitor: make_ref(),
+            session_id: "s1",
+            run_id: "r1",
+            timeout_ms: 60_000,
+            tasks: nil
+          },
+          overrides
+        )
+      )
+    end
+
+    defp snapshot(status, tasks, pending) do
+      {:channel_message, "dispatcher:s1", "run_snapshot",
+       %{
+         "run_id" => "uuid-1",
+         "status" => status,
+         "pending" => pending,
+         "summary" => %{
+           "status" => status,
+           "tasks" => tasks,
+           "counts" => %{"passed" => 1, "failed" => 0, "skipped" => 0, "cached" => 1},
+           "failures" => []
+         }
+       }}
+    end
+
+    defp task(id, status, extra \\ %{}),
+      do: Map.merge(%{"task_id" => id, "status" => status, "cached" => false}, extra)
+
+    defp completed(id, exit_code),
+      do:
+        {:channel_message, "dispatcher:s1", "task_completed",
+         %{"task_id" => id, "exit_code" => exit_code, "duration_ms" => 5}}
+
+    test "a running snapshot reports each finished task once and keeps waiting" do
+      tasks = [
+        task("a", "done"),
+        task("b", "failed", %{"exit_code" => 2}),
+        task("c", "running"),
+        task("d", "done", %{"cached" => true})
+      ]
+
+      output =
+        capture_io(fn ->
+          {:noreply, state, 60_000} =
+            Dispatcher.handle_info(snapshot("running", tasks, 1), rejoin_state())
+
+          send(self(), {:state, state})
+        end)
+
+      assert_received {:state, state}
+      assert state.finished == MapSet.new(["a", "b"])
+      assert output =~ "Task a OK (replayed)"
+      assert output =~ "Task b FAIL(2) (replayed)"
+      refute output =~ "Task c"
+      refute output =~ "Task d"
+      assert output =~ "2 tasks finished, 1 pending (running)"
+    end
+
+    test "a task already reported live is not reported again by the snapshot, nor the reverse" do
+      output =
+        capture_io(fn ->
+          {:noreply, s1, _} = Dispatcher.handle_info(completed("a", 0), rejoin_state())
+
+          {:noreply, s2, _} =
+            Dispatcher.handle_info(
+              snapshot("running", [task("a", "done"), task("b", "done")], 0),
+              s1
+            )
+
+          {:noreply, s3, _} = Dispatcher.handle_info(completed("b", 0), s2)
+          send(self(), {:state, s3})
+        end)
+
+      assert_received {:state, state}
+      assert state.finished == MapSet.new(["a", "b"])
+      assert length(Regex.scan(~r/Task a /, output)) == 1
+      assert length(Regex.scan(~r/Task b /, output)) == 1
+    end
+
+    test "a snapshot of a finished run ends the dispatch with the run's outcome" do
+      capture_io(fn ->
+        assert {:stop, :normal, _} =
+                 Dispatcher.handle_info(
+                   snapshot("complete", [task("a", "done")], 0),
+                   rejoin_state()
+                 )
+
+        assert {:stop, {:shutdown, :failed}, _} =
+                 Dispatcher.handle_info(
+                   snapshot("failed", [task("a", "failed")], 0),
+                   rejoin_state()
+                 )
+      end)
+    end
+
+    test "a malformed snapshot is ignored" do
+      state = rejoin_state()
+
+      capture_io(fn ->
+        for payload <- [
+              %{},
+              %{"status" => "running"},
+              %{"status" => "running", "summary" => %{"tasks" => [%{"task_id" => 1}]}},
+              "nope"
+            ] do
+          msg = {:channel_message, "dispatcher:s1", "run_snapshot", payload}
+          assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
+        end
+      end)
+    end
+
+    test "a refused resume stops the dispatch as a failure" do
+      for reason <- ["run_not_found", "invalid_join_params"] do
+        msg = {:topic_closed, "dispatcher:s1", {:failed_to_join, %{"reason" => reason}}}
+
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :resume_refused}, _} =
+                   Dispatcher.handle_info(msg, rejoin_state())
+        end)
+      end
     end
   end
 end

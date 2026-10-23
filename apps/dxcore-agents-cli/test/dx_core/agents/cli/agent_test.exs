@@ -246,6 +246,19 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert capabilities == state.capabilities
     end
 
+    test "agent_ready names the task the agent is running, or nil when idle" do
+      state = base_state()
+      assert {:noreply, _} = Agent.handle_info({:joined, "agent:s1"}, state)
+      assert_receive {:"$gen_cast", {:push, "agent_ready", %{"current_task" => nil}}}
+
+      busy = base_state(%{current_task_id: "pkg#build", current_run_id: "run-uuid"})
+      assert {:noreply, _} = Agent.handle_info({:joined, "agent:s1"}, busy)
+
+      assert_receive {:"$gen_cast",
+                      {:push, "agent_ready",
+                       %{"current_task" => %{"task_id" => "pkg#build", "run_id" => "run-uuid"}}}}
+    end
+
     test "joined logs tags when present" do
       state =
         base_state(%{
