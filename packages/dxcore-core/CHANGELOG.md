@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.10.0
+
+### Minor Changes
+
+- 9b36bc5: The scheduler can be restarted mid-run without losing the run (#11951). It loads the run's finished tasks and in-flight leases every time it starts, from the `:state_loader` start option or, when a child spec has none, from the `:dxcore_core, :scheduler_state_loader` app env. So a scheduler that Horde restarts from its original options (when a deploy drains a pod) keeps finished tasks finished and in-flight tasks on the agent running them. The load runs in `handle_continue`, not in `init`. A failed load is retried with backoff (`:state_load_backoff_ms`, 3.1 s in total by default); if it still fails the scheduler stops with `{:shutdown, {:state_load_failed, reason}}` instead of starting from the bare graph, and the scheduler is now `restart: :transient`, so that stop is not restarted into a crash loop. A rehydrated result's `exit_code` is kept. A restored lease whose agent does not come back is released after `:lease_grace_ms`. An agent that reports a result no longer keeps a task that was pushed to it while it was busy. A released task is skipped instead of re-run once a `fail_fast` run has failed. An agent whose connection drops can keep its tasks for the same window (`Scheduler.hold_agent/2`, used by `ChannelHelpers` for agents that say in `agent_ready` what they run), so a pod drain that closes a busy agent's socket no longer hands its task to a second agent; other agents still release at once, and a disconnect from a scheduler that has stopped no longer skips the rest of the disconnect handling. Each held-lease check emits `[:dxcore, :scheduler, :held_leases_checked]` with the leases it released, kept and left waiting. New: `Scheduler.hold_agent/2`, `Scheduler.release_agent/3` (`reassign_task/2` now releases every task of the agent), the optional `on_task_assigned/3` and `on_task_released/2` plugin callbacks, and `Scheduler.offline_summary/4`.
+
 ## 0.9.0
 
 ### Minor Changes

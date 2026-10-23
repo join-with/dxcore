@@ -1,5 +1,15 @@
 # @repo/dxcore-agents-cli
 
+## 0.9.0
+
+### Minor Changes
+
+- 9b36bc5: `dxcore dispatch` resumes its run after a reconnect (#11951). Once the graph is submitted, every rejoin asks the coordinator for that run, prints the tasks that finished while it was away (each task once), and ends with the run's exit status if the run is already over. A coordinator that has no record of the run makes the dispatch fail at once instead of waiting for its timeout.
+
+  `dxcore agent` says in `agent_ready` which task it is running (or that it is idle), so after a reconnect the coordinator does not keep it on a task it finished, or push it work while it is busy.
+
+  The WebSocket client rejoins a channel that crashed on the coordinator, instead of waiting for a reconnect that never comes.
+
 ## 0.8.13
 
 ### Patch Changes
