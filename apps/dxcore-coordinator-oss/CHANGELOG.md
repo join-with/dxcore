@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.5.21
+
+### Patch Changes
+
+- db956ac: Security: hpax (HTTP/2 header compression, used by the Bandit web server and the Mint HTTP client) is updated to 1.1.0 and, where the package uses it, mint is updated to 1.11.0. This fixes the published EEF advisories against the older versions (HTTP/2 and HTTP/1 denial-of-service, request-line injection and response-smuggling issues, #12128).
+
 ## 0.5.20
 
 ### Patch Changes
