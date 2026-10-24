@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.10.1
+
+### Patch Changes
+
+- 6609123: Every Mix compile task (each Mix package's `build` except a hub's, a host's `dev-deps` and `dev-compile`, and the hub's `test-deps` and `test-compile-shell`) now runs through the new `repo-cli turbo mix-task` command, which checks its compiled apps before and after compiling and stops a compile that runs longer than 15 minutes (a NIF download with no timeout could hang it). Before the compile, an app that a cache restore left incomplete (modules missing, a missing NIF, priv link or colocated file) is removed and recompiled; consistent apps are kept, so a local compile stays incremental. After it, an incomplete app fails the task, so it is never uploaded to the shared build cache (#12200). A package's `build` no longer caches `_build/test`. `@repo/ui-components` now fails `build`, not `lint`, on a compile warning, and in the packages whose `mix format` loads a plugin (which compiles into `_build/dev` too) `lint` now waits for `build`.
+
 ## 0.10.0
 
 ### Minor Changes
