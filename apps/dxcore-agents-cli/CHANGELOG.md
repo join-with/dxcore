@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.9.2
+
+### Patch Changes
+
+- 2dbd845: The `build` task caches only the Burrito binary (`burrito_out/**`), not `_build`, and the CLI's `burrito_out/` is gitignored. Burrito's compiled beams hold the absolute path they were built under, so a `_build` restored from a runner with another workspace path broke the next uncached release build, and the CLI's restored binary changed its own `build` hash, which made that uncached build happen (#12127).
+
 ## 0.9.1
 
 ### Patch Changes
