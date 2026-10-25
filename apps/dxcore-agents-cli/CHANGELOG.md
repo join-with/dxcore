@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.10.0
+
+### Minor Changes
+
+- 6c538d9: `dxcore dispatch --deadline <time>` (ISO 8601, with an offset) ends a run by a set time. At the deadline the run hands out no new tasks, and the running ones finish. Once nothing runs, or `--hard-stop-after` seconds later (default 120), the dispatcher cancels what is left, prints `N of M tasks left` and exits 75 (unfinished). A run with a failed task still exits 1. Both coordinators accept the new `drain_run` channel message, which replies with the number of tasks still assigned. The dispatcher waits until that number is 0, and sends `drain_run` again every 5 s while draining, so a scheduler rebuilt on another node is drained too. `cancel_run` now replies `{"cancelled": true | false}`. The OSS coordinator checks that the socket's tenant owns the session before it drains or cancels a run (#12312).
+
 ## 0.9.5
 
 ### Patch Changes
