@@ -214,12 +214,86 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
       assert Scheduler.whereis(nil, session_id, "test-run") == nil
     end
 
+    test "replies cancelled false for an unknown run", %{socket: socket} do
+      ref = push(socket, "cancel_run", %{"run_id" => "non-existent-run"})
+      assert_reply ref, :ok, %{"cancelled" => false}
+    end
+
     test "handles cancel for non-existent run gracefully", %{socket: socket} do
       # Should not crash
       push(socket, "cancel_run", %{"run_id" => "non-existent-run"})
 
       # Give it a moment to process - no crash means success
       Process.sleep(50)
+    end
+  end
+
+  describe "drain_run" do
+    test "drains the run's scheduler and keeps it alive", %{
+      socket: socket,
+      session_id: session_id
+    } do
+      {:ok, parsed} = Jason.decode(File.read!(Path.join(@fixtures_dir, "dry_run_simple.json")))
+      ref = push(socket, "submit_graph", %{"run_id" => "drain-run", "tasks" => parsed["tasks"]})
+      assert_reply ref, :ok, _
+      pid = Scheduler.whereis(nil, session_id, "drain-run")
+      # A task is ready, so a :no_task below can only be the drain's.
+      assert MapSet.size(Scheduler.status(pid).frontier) > 0
+
+      ref = push(socket, "drain_run", %{"run_id" => "drain-run"})
+      assert_reply ref, :ok, %{"draining" => true, "running" => 0}
+
+      assert Process.alive?(pid)
+      assert Scheduler.request_task(pid, "probe") == :no_task
+    end
+
+    test "an unknown run is an error reply", %{socket: socket} do
+      ref = push(socket, "drain_run", %{"run_id" => "non-existent-run"})
+      assert_reply ref, :error, %{"reason" => "unknown_run"}
+    end
+
+    test "another tenant's socket on the same session can neither drain nor cancel the run", %{
+      socket: socket,
+      session_id: session_id
+    } do
+      {:ok, parsed} = Jason.decode(File.read!(Path.join(@fixtures_dir, "dry_run_simple.json")))
+      ref = push(socket, "submit_graph", %{"run_id" => "owned-run", "tasks" => parsed["tasks"]})
+      assert_reply ref, :ok, _
+      pid = Scheduler.whereis(nil, session_id, "owned-run")
+
+      {:ok, _, intruder} =
+        DxCore.Agents.Web.DispatcherSocket
+        |> socket("other", %{current_scope: Scope.for_tenant("other-tenant", "Other Corp")})
+        |> subscribe_and_join(DxCore.Agents.Web.DispatcherChannel, "dispatcher:#{session_id}")
+
+      ref = push(intruder, "drain_run", %{"run_id" => "owned-run"})
+      assert_reply ref, :error, %{"reason" => "unknown_run"}
+      ref = push(intruder, "cancel_run", %{"run_id" => "owned-run"})
+      assert_reply ref, :ok, %{"cancelled" => false}
+
+      # The owner's run is untouched: alive, and still handing out tasks.
+      assert Process.alive?(pid)
+      assert Scheduler.status(pid).draining == false
+      assert {:ok, _} = Scheduler.request_task(pid, "probe")
+    end
+
+    test "a scheduler that stops answering is an unknown run, and the channel lives", %{
+      socket: socket,
+      session_id: session_id
+    } do
+      {:ok, parsed} = Jason.decode(File.read!(Path.join(@fixtures_dir, "dry_run_simple.json")))
+      ref = push(socket, "submit_graph", %{"run_id" => "stuck-run", "tasks" => parsed["tasks"]})
+      assert_reply ref, :ok, _
+      pid = Scheduler.whereis(nil, session_id, "stuck-run")
+      :ok = :sys.suspend(pid)
+
+      try do
+        ref = push(socket, "drain_run", %{"run_id" => "stuck-run"})
+        assert_reply ref, :error, %{"reason" => "unknown_run"}, 7_000
+        assert Process.alive?(socket.channel_pid)
+      after
+        :sys.resume(pid)
+      end
     end
   end
 end

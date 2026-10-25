@@ -69,6 +69,33 @@ defmodule DxCore.Core.SchedulerTest do
     %{scheduler: pid, session_id: session_id, graph: graph}
   end
 
+  describe "drain/1" do
+    test "a draining scheduler hands out no task, though one is ready", %{scheduler: pid} do
+      assert MapSet.size(Scheduler.status(pid).frontier) > 0
+      assert {:ok, 0} = Scheduler.drain(pid)
+      assert Scheduler.request_task(pid, "agent-1") == :no_task
+      # The task is still ready: the :no_task is the drain's.
+      assert MapSet.size(Scheduler.status(pid).frontier) > 0
+    end
+
+    test "a task running when the drain starts still reports", %{scheduler: pid} do
+      {:ok, task} = Scheduler.request_task(pid, "agent-1")
+      # The drain counts the task still running, so a dispatcher waits for it.
+      assert {:ok, 1} = Scheduler.drain(pid)
+      assert {:ok, _run_status} = Scheduler.report_result(pid, task.task_id, "agent-1", :success)
+      # Draining again is idempotent and sees it finished.
+      assert {:ok, 0} = Scheduler.drain(pid)
+      assert Scheduler.status(pid).tasks[task.task_id].status == :done
+      assert Scheduler.request_task(pid, "agent-1") == :no_task
+    end
+
+    test "status says it is draining", %{scheduler: pid} do
+      assert Scheduler.status(pid).draining == false
+      {:ok, _} = Scheduler.drain(pid)
+      assert Scheduler.status(pid).draining == true
+    end
+  end
+
   describe "dangling dependencies (#4154 defense-in-depth)" do
     test "a task whose dependency is absent from the graph stays assignable, not blocked forever" do
       # Mirrors the prod hang: wf#lint depends on wf#deps, but wf#deps was dropped

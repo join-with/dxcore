@@ -37,13 +37,11 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
 
   @impl true
   def handle_in("cancel_run", %{"run_id" => run_id}, socket) do
-    session_id = socket.assigns.session_id
+    case scheduler_for(run_id, socket) do
+      :error ->
+        {:reply, {:ok, %{"cancelled" => false}}, socket}
 
-    case DxCore.Core.Scheduler.whereis(nil, session_id, run_id) do
-      nil ->
-        :ok
-
-      pid ->
+      {:ok, pid} ->
         DynamicSupervisor.terminate_child(DxCore.Core.SchedulerSupervisor, pid)
 
         @endpoint.broadcast!(socket.assigns.dispatcher_topic, "run_complete", %{
@@ -51,9 +49,41 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
           "status" => "cancelled",
           "summary" => nil
         })
-    end
 
-    {:noreply, socket}
+        {:reply, {:ok, %{"cancelled" => true}}, socket}
+    end
+  end
+
+  # See the SaaS DispatcherChannel's drain_run: no new tasks, running ones finish.
+  def handle_in("drain_run", %{"run_id" => run_id}, socket) do
+    with {:ok, pid} <- scheduler_for(run_id, socket),
+         {:ok, running} <- drain(pid) do
+      {:reply, {:ok, %{"draining" => true, "running" => running}}, socket}
+    else
+      :error -> {:reply, {:error, %{"reason" => "unknown_run"}}, socket}
+    end
+  end
+
+  # The run's scheduler, if the socket's tenant owns the session the socket
+  # joined: the topic names the session, so a token of another tenant could
+  # join it.
+  defp scheduler_for(run_id, socket) do
+    session_id = socket.assigns.session_id
+
+    with {:ok, _session} <- Sessions.get_session(socket.assigns.current_scope, session_id),
+         pid when is_pid(pid) <- DxCore.Core.Scheduler.whereis(nil, session_id, run_id) do
+      {:ok, pid}
+    else
+      _ -> :error
+    end
+  end
+
+  # A scheduler that stops between the lookup and the call is an unknown run,
+  # not a crash of this channel.
+  defp drain(pid) do
+    DxCore.Agents.Scheduler.drain(pid)
+  catch
+    :exit, _reason -> :error
   end
 
   defp resolve_failure_strategy(payload) do

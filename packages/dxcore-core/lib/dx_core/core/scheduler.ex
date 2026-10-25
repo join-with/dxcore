@@ -229,6 +229,16 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @doc """
+  Stops handing out tasks: every later `request_task/3` returns `:no_task`.
+  Tasks already running finish and report as usual. Returns
+  `{:ok, running}`, the number of tasks assigned and not yet reported. A CI
+  dispatch drains its run at its deadline (`dxcore dispatch --deadline`) and
+  cancels it once nothing runs. Draining twice is the same as once.
+  """
+  @spec drain(pid()) :: {:ok, non_neg_integer()}
+  def drain(pid), do: GenServer.call(pid, :drain)
+
+  @doc """
   Report the result of a task execution.
 
   `agent_id` must match the agent the task was assigned to (lease holder).
@@ -316,6 +326,7 @@ defmodule DxCore.Core.Scheduler do
       frontier: MapSet.new(),
       failure_strategy: failure_strategy,
       failed_fast: false,
+      draining: false,
       topology_check: Map.get(context, :topology_check, "infer"),
       expected_agents: get_in(context, [:topology, "agents"]),
       topology_timer: nil,
@@ -372,6 +383,14 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
+  def handle_call({:request_task, _agent_id, _agent_info}, _from, %{draining: true} = state),
+    do: {:reply, :no_task, state}
+
+  def handle_call(:drain, _from, state) do
+    running = Enum.count(state.tasks, fn {_id, %TaskState{status: s}} -> s == :running end)
+    {:reply, {:ok, running}, %{state | draining: true}}
+  end
+
   def handle_call({:request_task, agent_id, agent_info}, _from, state) do
     # Build list of frontier TaskState structs for the plugin
     frontier_tasks =
@@ -444,7 +463,8 @@ defmodule DxCore.Core.Scheduler do
       run_status: run_status,
       tasks: state.tasks,
       agents: state.agents,
-      frontier: state.frontier
+      frontier: state.frontier,
+      draining: state.draining
     }
 
     {:reply, reply, state}

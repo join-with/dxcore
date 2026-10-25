@@ -14,6 +14,10 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     --timeout, -T <seconds>       Max wait for completion (default: 900)
     --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
     --work-dir, -w <path>         Working directory for dxcore.json scanning (default: ".")
+    --deadline <time>             ISO 8601 time with an offset: no new tasks after it,
+                                  exit 75 when tasks are left (default: none)
+    --hard-stop-after <seconds>   Cancel tasks still running this long after the
+                                  deadline (default: 120)
 
   Reads task graph JSON from stdin, parses it using the build system adapter,
   and submits to the coordinator over WebSocket.\
@@ -21,6 +25,11 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   use DxCore.Agents.CLI.Command
   use GenServer
+
+  alias DxCore.Agents.CLI.Dispatcher.Deadline
+
+  # How often a draining dispatcher drains its run again (see :redrain).
+  @redrain_ms 5_000
 
   defstruct [
     :client,
@@ -32,6 +41,20 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     :shard_config,
     :failure_strategy,
     :org_slug,
+    # The coordinator's id for the run (the submit reply's run_id), which
+    # drain_run and cancel_run name.
+    :coordinator_run_id,
+    :deadline,
+    # Tasks the run executes: the submit reply's total_tasks - cached_tasks.
+    :to_run,
+    hard_stop_after_ms: 120_000,
+    draining: false,
+    # The tasks the coordinator still had assigned at its last drain reply;
+    # nil while no drain was accepted. The run is drained only at 0: the
+    # local `running` set lags a task_started still on its way.
+    drain_running: nil,
+    failed: false,
+    running: MapSet.new(),
     connected_agents: 0,
     # Tasks whose result has been printed, so a replayed snapshot and the live
     # event for the same task report it once.
@@ -53,6 +76,16 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     timeout_ms = Keyword.get(opts, :timeout, @default_timeout_s) * 1000
     build_system = Keyword.get(opts, :build_system, "turbo")
     failure_strategy = opts[:failure_strategy]
+
+    deadline_opts =
+      case Deadline.options(opts) do
+        {:ok, deadline_opts} ->
+          deadline_opts
+
+        {:error, msg} ->
+          IO.puts("[dispatcher:#{session_id}] #{msg}")
+          System.halt(1)
+      end
 
     org_slug =
       case DxCore.Agents.CLI.fetch_org_slug(coordinator_url, token) do
@@ -91,12 +124,14 @@ defmodule DxCore.Agents.CLI.Dispatcher do
             timeout_ms: timeout_ms,
             shard_config: shard_config,
             failure_strategy: failure_strategy,
-            org_slug: org_slug
+            org_slug: org_slug,
+            deadline: deadline_opts.deadline,
+            hard_stop_after_ms: deadline_opts.hard_stop_after_ms
           })
 
-        case await_exit(pid) do
-          :normal -> :ok
-          _reason -> System.halt(1)
+        case await_exit_code(pid) do
+          0 -> :ok
+          code -> System.halt(code)
         end
 
       {:error, msg} ->
@@ -133,6 +168,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   defdelegate await_exit(pid), to: DxCore.Agents.CLI
 
+  @doc "Wait for the dispatcher `pid` to stop; its process exit code (`Deadline.exit_code/1`)."
+  def await_exit_code(pid), do: pid |> await_exit() |> Deadline.exit_code()
+
   # --- GenServer Callbacks ---
 
   @impl GenServer
@@ -155,17 +193,23 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     ws_monitor = Process.monitor(client)
 
     state =
-      struct!(__MODULE__, %{
-        client: client,
-        ws_monitor: ws_monitor,
-        session_id: config.session_id,
-        run_id: run_id,
-        timeout_ms: config.timeout_ms,
-        tasks: config.tasks,
-        shard_config: config[:shard_config] || %{},
-        failure_strategy: config[:failure_strategy],
-        org_slug: config.org_slug
-      })
+      struct!(
+        __MODULE__,
+        Map.merge(
+          %{
+            client: client,
+            ws_monitor: ws_monitor,
+            session_id: config.session_id,
+            run_id: run_id,
+            timeout_ms: config.timeout_ms,
+            tasks: config.tasks,
+            shard_config: config[:shard_config] || %{},
+            failure_strategy: config[:failure_strategy],
+            org_slug: config.org_slug
+          },
+          Map.take(config, [:deadline, :hard_stop_after_ms])
+        )
+      )
 
     {:ok, state, state.timeout_ms}
   end
@@ -173,18 +217,26 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   @impl GenServer
   def handle_info({:channel_message, _topic, "task_started", payload}, state) do
     IO.puts("[coordinator] Task #{payload["task_id"]} assigned to #{payload["agent_id"]}")
-    {:noreply, state, state.timeout_ms}
+
+    {:noreply, %{state | running: MapSet.put(state.running, payload["task_id"])},
+     state.timeout_ms}
   end
 
   def handle_info({:channel_message, _topic, "task_completed", payload}, state) do
     task_id = payload["task_id"]
+    state = %{state | running: MapSet.delete(state.running, task_id)}
 
     if MapSet.member?(state.finished, task_id) do
-      {:noreply, state, state.timeout_ms}
+      stop_if_drained(state)
     else
       status = if payload["exit_code"] == 0, do: "OK", else: "FAIL(#{payload["exit_code"]})"
       IO.puts("[coordinator] Task #{task_id} #{status} (#{payload["duration_ms"]}ms)")
-      {:noreply, %{state | finished: MapSet.put(state.finished, task_id)}, state.timeout_ms}
+
+      stop_if_drained(%{
+        state
+        | finished: MapSet.put(state.finished, task_id),
+          failed: state.failed or payload["exit_code"] != 0
+      })
     end
   end
 
@@ -282,7 +334,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
         # From now on every rejoin asks for this run, which the coordinator
         # then replays; it refuses the rejoin if it has no such run.
         DxCore.Agents.WsClient.set_join_params(state.client, %{"resume" => true})
-        {:noreply, %{state | tasks: nil}, state.timeout_ms}
+        state = %{state | tasks: nil, coordinator_run_id: info["run_id"], to_run: to_run(info)}
+        schedule_deadline(state)
+        {:noreply, state, state.timeout_ms}
 
       {:error, reason} ->
         IO.puts("[dispatcher:#{state.session_id}] Failed to submit graph: #{inspect(reason)}")
@@ -293,6 +347,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   def handle_info({:joined, _topic}, state) do
     IO.puts("[dispatcher:#{state.session_id}] Reconnected to coordinator")
+    # A coordinator that restarted rebuilt the run's scheduler without its
+    # drain: drain it again.
+    state = if state.draining, do: drain(state), else: state
     {:noreply, state, state.timeout_ms}
   end
 
@@ -339,6 +396,37 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     {:stop, {:shutdown, {:ws_client_down, reason}}, state}
   end
 
+  def handle_info(:deadline, state) do
+    IO.puts(
+      "[dispatcher:#{state.session_id}] Deadline reached: no new tasks, " <>
+        "#{MapSet.size(state.running)} still running"
+    )
+
+    state = drain(%{state | draining: true})
+    schedule_redrain()
+    stop_if_drained(state, :fresh)
+  end
+
+  # While draining, drain again every few seconds: a scheduler rebuilt on
+  # another coordinator node (a rollout, a crash) starts without the drain,
+  # and this dispatcher's socket may never rejoin to send it.
+  def handle_info(:redrain, %{draining: true} = state) do
+    state = drain(state)
+    schedule_redrain()
+    stop_if_drained(state, :fresh)
+  end
+
+  def handle_info(:redrain, state), do: {:noreply, state, state.timeout_ms}
+
+  def handle_info(:hard_stop, state) do
+    IO.puts(
+      "[dispatcher:#{state.session_id}] Hard stop: cancelling " <>
+        "#{MapSet.size(state.running)} running tasks"
+    )
+
+    stop_unfinished(state)
+  end
+
   def handle_info(msg, state) do
     IO.puts("[dispatcher:#{state.session_id}] Unexpected message: #{inspect(msg)}")
     {:noreply, state, state.timeout_ms}
@@ -366,15 +454,25 @@ defmodule DxCore.Agents.CLI.Dispatcher do
       task_id = task["task_id"]
 
       cond do
+        task["status"] == "running" ->
+          %{acc | running: MapSet.put(acc.running, task_id)}
+
+        # Released and queued again, or never started: not running.
         task["cached"] == true or task["status"] not in @finished_statuses ->
-          acc
+          %{acc | running: MapSet.delete(acc.running, task_id)}
 
         MapSet.member?(acc.finished, task_id) ->
-          acc
+          %{acc | running: MapSet.delete(acc.running, task_id)}
 
         true ->
           IO.puts("[coordinator] Task #{task_id} #{snapshot_status(task)} (replayed)")
-          %{acc | finished: MapSet.put(acc.finished, task_id)}
+
+          %{
+            acc
+            | finished: MapSet.put(acc.finished, task_id),
+              running: MapSet.delete(acc.running, task_id),
+              failed: acc.failed or task["status"] == "failed"
+          }
       end
     end)
   end
@@ -390,7 +488,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     finish(status, state)
   end
 
-  defp finish_or_wait(_status, _payload, state), do: {:noreply, state, state.timeout_ms}
+  defp finish_or_wait(_status, _payload, state), do: stop_if_drained(state)
 
   defp print_completion(payload) do
     IO.puts("[coordinator] Run #{payload["run_id"]} complete: #{payload["status"]}")
@@ -405,7 +503,114 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   defp finish("failed", state), do: {:stop, {:shutdown, :failed}, state}
+
+  defp finish("cancelled", %{draining: true} = state),
+    do: {:stop, {:shutdown, unfinished_reason(state)}, state}
+
   defp finish(_status, state), do: {:stop, :normal, state}
+
+  defp to_run(%{"total_tasks" => total, "cached_tasks" => cached})
+       when is_integer(total) and is_integer(cached) and total >= cached,
+       do: total - cached
+
+  defp to_run(_info), do: nil
+
+  defp schedule_deadline(%{deadline: nil}), do: :ok
+
+  defp schedule_deadline(state) do
+    {drain_ms, stop_ms} =
+      Deadline.delays(state.deadline, state.hard_stop_after_ms, DateTime.utc_now())
+
+    Process.send_after(self(), :deadline, drain_ms)
+    Process.send_after(self(), :hard_stop, stop_ms)
+    :ok
+  end
+
+  # Draining: stop once nothing runs, here and on the coordinator. When
+  # every task has finished, the coordinator's run_complete is on its way,
+  # and the run passes or fails on it; cancelling would turn a finished run
+  # into an unfinished one. With nothing running here but a count from an
+  # earlier reply (`:stale`), ask the coordinator again first. A drain it
+  # did not accept never stops the run early: the hard stop does.
+  defp stop_if_drained(state, freshness \\ :stale)
+
+  defp stop_if_drained(%{draining: true} = state, freshness) do
+    cond do
+      MapSet.size(state.running) > 0 or all_finished?(state) ->
+        {:noreply, state, state.timeout_ms}
+
+      state.drain_running == 0 ->
+        stop_unfinished(state)
+
+      freshness == :stale ->
+        stop_if_drained(drain(state), :fresh)
+
+      true ->
+        {:noreply, state, state.timeout_ms}
+    end
+  end
+
+  defp stop_if_drained(state, _freshness), do: {:noreply, state, state.timeout_ms}
+
+  defp schedule_redrain, do: Process.send_after(self(), :redrain, @redrain_ms)
+
+  defp all_finished?(%{to_run: to_run, finished: finished}) when is_integer(to_run),
+    do: MapSet.size(finished) >= to_run
+
+  defp all_finished?(_state), do: false
+
+  # `drain_run`, and the coordinator's count of tasks still assigned. A
+  # coordinator older than that count replies without it: the local
+  # `running` set is all there is.
+  defp drain(state) do
+    case push_with_reply(state, "drain_run") do
+      {:ok, %{"running" => running}} when is_integer(running) and running >= 0 ->
+        %{state | drain_running: running}
+
+      {:ok, reply} when is_map(reply) and not is_map_key(reply, "running") ->
+        %{state | drain_running: 0}
+
+      other ->
+        IO.puts(
+          "[dispatcher:#{state.session_id}] The coordinator did not drain the run " <>
+            "(#{inspect(other)}); waiting for the hard stop"
+        )
+
+        %{state | drain_running: nil}
+    end
+  end
+
+  defp stop_unfinished(state) do
+    case push_with_reply(state, "cancel_run") do
+      {:ok, _} -> :ok
+      other -> IO.puts("[dispatcher:#{state.session_id}] cancel_run failed: #{inspect(other)}")
+    end
+
+    IO.puts(
+      "[dispatcher:#{state.session_id}] Unfinished at the deadline: " <>
+        Deadline.left_line(state.to_run, MapSet.size(state.finished))
+    )
+
+    {:stop, {:shutdown, unfinished_reason(state)}, state}
+  end
+
+  # A failed task is a known failure: it outranks "unfinished".
+  defp unfinished_reason(%{failed: true}), do: :failed
+  defp unfinished_reason(_state), do: :unfinished
+
+  # The coordinator's reply within 10 seconds, or why there is none. A
+  # GenServer.call timeout exits the caller, which would turn an unfinished
+  # run into a crash (exit 1).
+  defp push_with_reply(state, event) do
+    DxCore.Agents.WsClient.push_and_wait(
+      state.client,
+      event,
+      %{"run_id" => state.coordinator_run_id},
+      10_000
+    )
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
 
   # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
   # `parse_task/1`, kept equal by dispatcher_test.exs). A build system's task
@@ -531,7 +736,9 @@ defmodule DxCore.Agents.CLI.Dispatcher do
           timeout: :integer,
           build_system: :string,
           work_dir: :string,
-          failure_strategy: :string
+          failure_strategy: :string,
+          deadline: :string,
+          hard_stop_after: :string
         ],
         aliases: [
           c: :coordinator,
