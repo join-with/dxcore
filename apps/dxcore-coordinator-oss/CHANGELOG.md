@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.5
+
+### Patch Changes
+
+- 29eb188: Bump bandit to 1.14.1 in every mix.lock that pinned an older version (#15081). Bandit 1.11.0 is flagged by EEF-CVE-2026-39803 (HTTP/1 chunked body reader ignores the length cap, fixed in 1.11.1), which fails the brainstretch-hub deps audit. 1.14.1 is the release that fixes every published Bandit advisory (the others are fixed in 1.11.0 to 1.14.1: HTTP/1 chunked smuggling and amplification, HTTP/2 flow control and HPACK limits, WebSocket fragment and inflate limits). thousand_island moves to 1.6.0 in the locks below it, because bandit 1.14.1 requires `~> 1.6`, and hpax to 1.1.0 in two locks that were still on 1.0.3.
+
 ## 0.6.4
 
 ### Patch Changes
