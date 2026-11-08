@@ -9,7 +9,8 @@ defmodule DxCore.Agents.WsClient do
 
   When the connection drops, the client uses exponential backoff
   (100ms, 500ms, 1s, 2s, 5s) and gives up after the reconnect
-  timeout (default 30 seconds), stopping with `{:shutdown, :reconnect_timeout}`.
+  timeout (default `DxCore.Agents.CLI.LostCoordinator.reconnect_timeout_ms/0`),
+  stopping with `{:shutdown, :reconnect_timeout}`.
 
   ## Options
 
@@ -17,7 +18,8 @@ defmodule DxCore.Agents.WsClient do
     * `:topic` - Phoenix channel topic to join (required)
     * `:caller` - PID to receive channel messages (required)
     * `:token` - authentication token (optional)
-    * `:reconnect_timeout_ms` - max time in ms to keep retrying (default 30_000)
+    * `:reconnect_timeout_ms` - max time in ms to keep retrying (default
+      `DxCore.Agents.CLI.LostCoordinator.reconnect_timeout_ms/0`)
 
   ## Usage
 
@@ -54,7 +56,13 @@ defmodule DxCore.Agents.WsClient do
     topic = Keyword.fetch!(opts, :topic)
     caller = Keyword.fetch!(opts, :caller)
     token = Keyword.get(opts, :token)
-    reconnect_timeout_ms = Keyword.get(opts, :reconnect_timeout_ms, 30_000)
+
+    reconnect_timeout_ms =
+      Keyword.get(
+        opts,
+        :reconnect_timeout_ms,
+        DxCore.Agents.CLI.LostCoordinator.reconnect_timeout_ms()
+      )
 
     config = %{
       url: url,
@@ -75,6 +83,15 @@ defmodule DxCore.Agents.WsClient do
   @doc "Push an event and wait for the server reply (synchronous)."
   def push_and_wait(client, event, payload, timeout \\ 30_000) do
     GenServer.call(client, {:push_and_wait, event, payload}, timeout)
+  end
+
+  @doc """
+  Push an event and return once it has gone to the connection, without
+  waiting for a server reply (the coordinator replies to none of an agent's
+  events). For a push that must be on the wire before the process exits.
+  """
+  def push_sync(client, event, payload, timeout \\ 10_000) do
+    GenServer.call(client, {:push_sync, event, payload}, timeout)
   end
 
   @doc "Set the params sent with every later join, i.e. each rejoin after a reconnect."
@@ -188,6 +205,18 @@ defmodule DxCore.Agents.WsClient do
 
       {:error, reason} ->
         Logger.warning("[ws_client] push_and_wait failed: #{inspect(reason)}")
+        {:reply, {:error, reason}, socket}
+    end
+  end
+
+  @impl Slipstream
+  def handle_call({:push_sync, event, payload}, _from, socket) do
+    case safe_push(socket, socket.assigns.topic, event, payload) do
+      {:ok, _ref} ->
+        {:reply, :ok, socket}
+
+      {:error, reason} ->
+        Logger.warning("[ws_client] push_sync failed: #{inspect(reason)}")
         {:reply, {:error, reason}, socket}
     end
   end

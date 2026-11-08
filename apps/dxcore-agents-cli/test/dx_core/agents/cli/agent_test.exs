@@ -311,7 +311,8 @@ defmodule DxCore.Agents.CLI.AgentTest do
     test "disconnected returns noreply" do
       state = base_state()
       msg = {:disconnected, :connection_reset}
-      assert {:noreply, ^state} = Agent.handle_info(msg, state)
+      assert {:noreply, dropped} = Agent.handle_info(msg, state)
+      assert %{dropped | lost_at: nil} == state
     end
 
     test "topic_closed returns noreply" do
@@ -349,14 +350,330 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert {:stop, :normal, ^state} = Agent.handle_info(msg, state)
     end
 
-    test "DOWN from client with reconnect_timeout while busy stops without cleanup" do
+    test "DOWN from client with reconnect_timeout while busy keeps the task running" do
       port = open_test_port()
       state = base_state(%{current_port: port, current_task_id: "t1", start_time: 0})
       ref = state.ws_monitor
       client = state.client
       msg = {:DOWN, ref, :process, client, {:shutdown, :reconnect_timeout}}
-      assert {:stop, :normal, ^state} = Agent.handle_info(msg, state)
-      refute_receive {:"$gen_cast", {:push, "task_result", _}}, 10
+
+      assert {:noreply, lost, :infinity} = Agent.handle_info(msg, state)
+      assert {lost.client, lost.ws_monitor, lost.current_port} == {nil, nil, port}
+      assert Port.info(port) != nil
+      refute_receive {:"$gen_cast", _}, 10
+
+      # Its output is still read, and goes nowhere but the agent's log.
+      log =
+        capture_io(fn ->
+          assert {:noreply, ^lost, :infinity} =
+                   Agent.handle_info({port, {:data, {:eol, "still going"}}}, lost)
+        end)
+
+      assert log =~ "still going"
+      refute_receive {:"$gen_cast", _}, 10
+    end
+
+    test "a task that ends after the coordinator was lost reconnects, reports its result, then stops" do
+      port = open_test_port()
+      parent = self()
+      reporter = DxCore.Agents.Test.MockWsClient.spawn_link()
+
+      lost =
+        base_state(%{
+          client: nil,
+          ws_monitor: nil,
+          current_port: port,
+          current_task_id: "t1",
+          current_run_id: "r1",
+          start_time: System.monotonic_time(:millisecond),
+          connect: fn ->
+            send(parent, :connecting)
+            {:ok, reporter}
+          end
+        })
+
+      capture_io(fn ->
+        assert {:noreply, reporting} = Agent.handle_info({port, {:exit_status, 0}}, lost)
+        assert_receive :connecting
+        assert reporting.client == reporter
+        assert reporting.current_port == nil
+        assert %{"task_id" => "t1", "run_id" => "r1", "exit_code" => 0} = reporting.lost_result
+
+        assert {:stop, :normal, _} = Agent.handle_info({:joined, "agent:s1"}, reporting)
+      end)
+
+      # The coordinator hears the agent is back with the task, then its result.
+      assert_receive {:ws_cast,
+                      {:push, "agent_ready",
+                       %{"current_task" => %{"task_id" => "t1", "run_id" => "r1"}}}}
+
+      assert_receive {:ws_call,
+                      {:push_sync, "task_result", %{"exit_code" => 0, "task_id" => "t1"}}}
+    end
+
+    test "a lost result whose reconnect also times out is given up, and the agent stops" do
+      reporting =
+        base_state(%{
+          lost_result: %{
+            "task_id" => "t1",
+            "run_id" => "r1",
+            "exit_code" => 0,
+            "duration_ms" => 5
+          }
+        })
+
+      msg =
+        {:DOWN, reporting.ws_monitor, :process, reporting.client, {:shutdown, :reconnect_timeout}}
+
+      log = capture_io(fn -> assert {:stop, :normal, _} = Agent.handle_info(msg, reporting) end)
+      assert log =~ "could not report task t1's result (exit 0)"
+    end
+
+    test "the first dropped connection starts the lost clock, and a rejoin clears it" do
+      state = base_state()
+
+      capture_io(fn ->
+        assert {:noreply, dropped} = Agent.handle_info({:disconnected, :closed}, state)
+        assert is_integer(dropped.lost_at)
+
+        assert {:noreply, retried} =
+                 Agent.handle_info({:disconnected, :econnrefused}, dropped)
+
+        assert retried.lost_at == dropped.lost_at
+
+        assert {:noreply, back} = Agent.handle_info({:joined, "agent:s1"}, retried)
+        assert back.lost_at == nil
+      end)
+    end
+
+    test "a task kept past the reconnect window is stopped when its grace, counted from the drop, runs out" do
+      port = open_test_port()
+      now = System.monotonic_time(:millisecond)
+
+      busy = fn lost_at ->
+        base_state(%{
+          current_port: port,
+          current_task_id: "t1",
+          start_time: now,
+          lost_at: lost_at,
+          reconnect_timeout_ms: 100,
+          task_grace_ms: 100
+        })
+      end
+
+      down = fn state ->
+        {:DOWN, state.ws_monitor, :process, state.client, {:shutdown, :reconnect_timeout}}
+      end
+
+      capture_io(fn ->
+        # Dropped 200 ms ago: the reconnect window and the grace are both spent.
+        spent = busy.(now - 200)
+        assert {:noreply, _lost, :infinity} = Agent.handle_info(down.(spent), spent)
+        assert_receive {:lost_task_stop, "t1"}, 50
+
+        # Dropped just now: the stop waits out both.
+        fresh = busy.(System.monotonic_time(:millisecond))
+        assert {:noreply, _lost, :infinity} = Agent.handle_info(down.(fresh), fresh)
+        refute_receive {:lost_task_stop, "t1"}, 150
+        assert_receive {:lost_task_stop, "t1"}, 200
+      end)
+    end
+
+    test "a lost task's stop sends it SIGTERM and arms the SIGKILL" do
+      port = open_test_port()
+
+      lost =
+        base_state(%{
+          client: nil,
+          ws_monitor: nil,
+          current_port: port,
+          current_task_id: "t1",
+          current_run_id: "r1",
+          start_time: System.monotonic_time(:millisecond),
+          kill_after_ms: 20
+        })
+
+      capture_io(fn ->
+        assert {:noreply, ^lost, :infinity} = Agent.handle_info({:lost_task_stop, "t1"}, lost)
+      end)
+
+      # SIGTERM: the task ends with 128 + 15, and its exit is still read.
+      assert_receive {^port, {:exit_status, 143}}, 2_000
+      assert_receive {:lost_task_kill, "t1"}, 200
+    end
+
+    test "a lost task still running at its kill gets SIGKILL, and its result is reported as -1" do
+      # It ignores SIGTERM, and runs a child of its own.
+      port =
+        Port.open({:spawn_executable, "/bin/sh"}, [
+          :binary,
+          :exit_status,
+          args: ["-c", "trap '' TERM; sleep 60 & echo $!; wait"]
+        ])
+
+      {:os_pid, os_pid} = Port.info(port, :os_pid)
+      assert_receive {^port, {:data, child}}, 2_000
+      child_pid = String.trim(child)
+
+      on_exit(fn ->
+        System.cmd("kill", ["-KILL", to_string(os_pid), child_pid], stderr_to_stdout: true)
+      end)
+
+      parent = self()
+      reporter = DxCore.Agents.Test.MockWsClient.spawn_link()
+
+      lost =
+        base_state(%{
+          client: nil,
+          ws_monitor: nil,
+          current_port: port,
+          current_task_id: "t1",
+          current_run_id: "r1",
+          start_time: System.monotonic_time(:millisecond),
+          connect: fn ->
+            send(parent, :connecting)
+            {:ok, reporter}
+          end
+        })
+
+      capture_io(fn ->
+        assert {:noreply, _, :infinity} = Agent.handle_info({:lost_task_stop, "t1"}, lost)
+        refute_receive {^port, {:exit_status, _}}, 200
+
+        assert {:noreply, reporting} = Agent.handle_info({:lost_task_kill, "t1"}, lost)
+        assert_receive :connecting
+        assert Port.info(port) == nil
+        assert reporting.current_port == nil
+        assert %{"task_id" => "t1", "run_id" => "r1", "exit_code" => -1} = reporting.lost_result
+      end)
+
+      # The task and its child are both gone.
+      {_, 0} = System.cmd("sh", ["-c", "sleep 0.2; ! kill -0 #{os_pid} 2>/dev/null"])
+      {_, 0} = System.cmd("sh", ["-c", "! kill -0 #{child_pid} 2>/dev/null"])
+    end
+
+    test "a stop or kill that comes due after its task ended changes nothing" do
+      state = base_state()
+      assert {:noreply, ^state} = Agent.handle_info({:lost_task_stop, "t1"}, state)
+      assert {:noreply, ^state} = Agent.handle_info({:lost_task_kill, "t1"}, state)
+
+      other = base_state(%{client: nil, current_port: open_test_port(), current_task_id: "t2"})
+      assert {:noreply, ^other} = Agent.handle_info({:lost_task_stop, "t1"}, other)
+    end
+
+    test "a lost task that outruns its grace is stopped, and the agent reports it and exits" do
+      parent = self()
+      first = DxCore.Agents.Test.MockWsClient.spawn_link()
+      second = DxCore.Agents.Test.MockWsClient.spawn_link()
+      clients = :counters.new(1, [])
+
+      connect = fn ->
+        :counters.add(clients, 1, 1)
+        client = if :counters.get(clients, 1) == 1, do: first, else: second
+        send(parent, {:connected, client})
+        {:ok, client}
+      end
+
+      capture_io(fn ->
+        {:ok, agent} =
+          GenServer.start(Agent, %{
+            coordinator_url: "http://coordinator.invalid",
+            agent_id: "a1",
+            session_id: "s1",
+            token: "t",
+            work_dir: ".",
+            adapter: DxCore.Agents.BuildSystem.Turbo,
+            capabilities: %{"tags" => %{}},
+            command_template: nil,
+            org_slug: "org",
+            connect: connect,
+            task_grace_ms: 100,
+            kill_after_ms: 5_000
+          })
+
+        watch = Process.monitor(agent)
+        assert_receive {:connected, ^first}
+
+        send(
+          agent,
+          {:channel_message, "agent:org:s1", "assign_task",
+           %{"task_id" => "t1", "run_id" => "r1", "command" => "sleep 60"}}
+        )
+
+        Process.unlink(first)
+        Process.exit(first, {:shutdown, :reconnect_timeout})
+
+        refute_receive {:connected, ^second}, 50
+        assert_receive {:connected, ^second}, 2_000
+
+        send(agent, {:joined, "agent:org:s1"})
+
+        assert_receive {:ws_call,
+                        {:push_sync, "task_result", %{"task_id" => "t1", "exit_code" => 143}}},
+                       2_000
+
+        assert_receive {:DOWN, ^watch, :process, ^agent, :normal}, 2_000
+      end)
+    end
+
+    test "a lost task: the coordinator goes away mid-task, the task still exits 0, and the agent exits after it" do
+      parent = self()
+      first = DxCore.Agents.Test.MockWsClient.spawn_link()
+      second = DxCore.Agents.Test.MockWsClient.spawn_link()
+      clients = :counters.new(1, [])
+
+      connect = fn ->
+        :counters.add(clients, 1, 1)
+        client = if :counters.get(clients, 1) == 1, do: first, else: second
+        send(parent, {:connected, client})
+        {:ok, client}
+      end
+
+      capture_io(fn ->
+        {:ok, agent} =
+          GenServer.start(Agent, %{
+            coordinator_url: "http://coordinator.invalid",
+            agent_id: "a1",
+            session_id: "s1",
+            token: "t",
+            work_dir: ".",
+            adapter: DxCore.Agents.BuildSystem.Turbo,
+            capabilities: %{"tags" => %{}},
+            command_template: nil,
+            org_slug: "org",
+            connect: connect
+          })
+
+        watch = Process.monitor(agent)
+        assert_receive {:connected, ^first}
+
+        marker =
+          Path.join(System.tmp_dir!(), "dxcore-agent-#{System.unique_integer([:positive])}")
+
+        on_exit(fn -> File.rm(marker) end)
+
+        send(
+          agent,
+          {:channel_message, "agent:org:s1", "assign_task",
+           %{
+             "task_id" => "t1",
+             "run_id" => "r1",
+             "command" => "sh -c sleep${IFS}0.5;touch${IFS}#{marker}"
+           }}
+        )
+
+        # The coordinator is gone for good: the client gives up reconnecting.
+        Process.unlink(first)
+        Process.exit(first, {:shutdown, :reconnect_timeout})
+
+        refute_receive {:DOWN, ^watch, :process, ^agent, _}, 200
+        assert_receive {:connected, ^second}, 5_000
+        assert File.exists?(marker), "the task ran to its end"
+
+        send(agent, {:joined, "agent:org:s1"})
+        assert_receive {:ws_call, {:push_sync, "task_result", %{"exit_code" => 0}}}, 5_000
+        assert_receive {:DOWN, ^watch, :process, ^agent, :normal}, 5_000
+      end)
     end
 
     test "DOWN from client with unexpected reason stops agent" do

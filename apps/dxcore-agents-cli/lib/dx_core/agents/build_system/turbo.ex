@@ -28,7 +28,15 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
   defp normalize_task(task) do
     task
     |> Map.put("cacheable", resolve_cacheable(task))
-    |> Map.put("command", "npx turbo run #{task["task"]} --filter=#{task["package"]}")
+    |> Map.put(
+      "command",
+      # Off a TTY (every dxcore agent run), turbo's own --log-order=auto
+      # resolves to "grouped", holding a task's whole output until it ends.
+      # --log-order=stream prints each line as turbo receives it, still
+      # prefixed with <package>:<task>, so a hung dependency is visible
+      # instead of silent for the task's whole run (#11867, #11876).
+      "npx turbo run #{task["task"]} --filter=#{task["package"]} --log-order=stream"
+    )
   end
 
   defp nonexistent_task?(%{"command" => "<NONEXISTENT>"}), do: true

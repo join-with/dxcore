@@ -13,10 +13,23 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
       assert task["package"] == "ui"
       assert task["task"] == "build"
       assert task["hash"] == "abc"
-      assert task["command"] == "npx turbo run build --filter=ui"
+      assert task["command"] == "npx turbo run build --filter=ui --log-order=stream"
       assert task["dependencies"] == []
       assert task["dependents"] == ["app#build"]
       assert task["cache"] == %{"status" => "MISS"}
+    end
+
+    test "forces stream log order so a running task's output is never silent" do
+      # Turbo's own --log-order=auto resolves to "grouped" off a TTY (every
+      # dxcore agent run), holding a task's whole output until it ends. A
+      # hung dependency then prints nothing for the task's entire runtime
+      # (#11867, #11876). --log-order=stream makes each line reach the
+      # agent's log as turbo prints it, still prefixed with <package>:<task>.
+      json =
+        ~s({"tasks":[{"taskId":"app#e2e","task":"e2e","package":"app","hash":"abc","dependencies":[]}]})
+
+      assert {:ok, [task]} = Turbo.parse_graph(json)
+      assert task["command"] == "npx turbo run e2e --filter=app --log-order=stream"
     end
 
     test "handles empty tasks list" do

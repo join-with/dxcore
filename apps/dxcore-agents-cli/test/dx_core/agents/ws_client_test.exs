@@ -72,6 +72,52 @@ defmodule DxCore.Agents.WsClientTest do
     end
   end
 
+  describe "handle_call/3 :push_sync" do
+    # A channel process that accepts one push and hands back a ref.
+    defp socket_with_channel(topic) do
+      parent = self()
+
+      channel =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, command} ->
+              send(parent, {:pushed, command})
+              GenServer.reply(from, {:ok, "ref-1"})
+          end
+        end)
+
+      %{socket_with_dying_channel(topic) | channel_pid: channel}
+    end
+
+    test "replies once the push has gone to the connection, not waiting for the server" do
+      socket = socket_with_channel("agent:test")
+      from = {self(), make_ref()}
+
+      assert {:reply, :ok, ^socket} =
+               WsClient.handle_call(
+                 {:push_sync, "task_result", %{"exit_code" => 0}},
+                 from,
+                 socket
+               )
+
+      assert_received {:pushed,
+                       {:__slipstream_command__,
+                        %Slipstream.Commands.PushMessage{
+                          topic: "agent:test",
+                          event: "task_result",
+                          payload: %{"exit_code" => 0}
+                        }}}
+    end
+
+    test "replies with an error when the transport exits mid-push" do
+      socket = socket_with_dying_channel("agent:test")
+      from = {self(), make_ref()}
+
+      assert {:reply, {:error, {:transport_down, _}}, ^socket} =
+               WsClient.handle_call({:push_sync, "task_result", %{}}, from, socket)
+    end
+  end
+
   describe "join params" do
     defp connected_socket(topic) do
       %Socket{

@@ -77,10 +77,15 @@ defmodule DxCore.Core.Scheduler do
 
   @default_registry DxCore.Core.SchedulerRegistry
 
-  # Agents rejoin within a second of a restart, but on a drain their sockets
+  # How long a dropped agent's tasks stay on it. An agent that lost the
+  # coordinator lets its task run on, then stops it and reconnects to report
+  # it: apps/dxcore-agents-cli's DxCore.Agents.CLI.LostCoordinator owns those
+  # numbers, and its lease_needed_ms/0 is the shortest hold that keeps the
+  # task off a second agent meanwhile. A CLI test reads this literal and
+  # fails if it drops below that. It also outlasts a drain, whose sockets
   # stay on the old pod for its drain wait (10 s) while the scheduler has
-  # already moved, so the window has to outlast that.
-  @default_lease_grace_ms 30_000
+  # already moved.
+  @default_lease_grace_ms 210_000
 
   # Waits between attempts to load the run's state. They add up to 3.1 s,
   # under GenServer.call's 5 s default, so a caller that arrives meanwhile
@@ -253,6 +258,9 @@ defmodule DxCore.Core.Scheduler do
   def report_result(pid, task_id, agent_id, result) do
     GenServer.call(pid, {:report_result, task_id, agent_id, result})
   end
+
+  @doc "The `:lease_grace_ms` a scheduler gets when none is given."
+  def default_lease_grace_ms, do: @default_lease_grace_ms
 
   @doc "Release every task assigned to `agent_id` (see `release_agent/3`)."
   def reassign_task(pid, agent_id), do: release_agent(pid, agent_id)

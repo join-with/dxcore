@@ -21,6 +21,8 @@ defmodule DxCore.Agents.CLI.Agent do
   use DxCore.Agents.CLI.Command
   use GenServer
 
+  alias DxCore.Agents.CLI.LostCoordinator
+
   defstruct [
     :client,
     :ws_monitor,
@@ -34,7 +36,18 @@ defmodule DxCore.Agents.CLI.Agent do
     :start_time,
     :capabilities,
     :command_template,
-    :org_slug
+    :org_slug,
+    # Starts a WsClient for this agent's topic, `{:ok, pid}`.
+    :connect,
+    # A task's result that ended while the coordinator was lost, to report
+    # once the agent rejoins.
+    :lost_result,
+    # When the connection dropped (monotonic ms), nil while connected.
+    :lost_at,
+    # How long a task runs on once the coordinator is lost (LostCoordinator).
+    reconnect_timeout_ms: LostCoordinator.reconnect_timeout_ms(),
+    task_grace_ms: LostCoordinator.task_grace_ms(),
+    kill_after_ms: LostCoordinator.kill_after_ms()
   ]
 
   # --- Public API ---
@@ -110,15 +123,24 @@ defmodule DxCore.Agents.CLI.Agent do
     ws_url = DxCore.Agents.CLI.http_to_ws(config.coordinator_url) <> "/agent/websocket"
 
     topic = "agent:#{config.org_slug}:#{config.session_id}"
+    agent = self()
 
-    {:ok, client} =
-      DxCore.Agents.WsClient.start_link(
-        url: ws_url,
-        topic: topic,
-        caller: self(),
-        token: config.token
-      )
+    reconnect_timeout_ms =
+      Map.get(config, :reconnect_timeout_ms, LostCoordinator.reconnect_timeout_ms())
 
+    connect =
+      Map.get(config, :connect) ||
+        fn ->
+          DxCore.Agents.WsClient.start_link(
+            url: ws_url,
+            topic: topic,
+            caller: agent,
+            token: config.token,
+            reconnect_timeout_ms: reconnect_timeout_ms
+          )
+        end
+
+    {:ok, client} = connect.()
     Process.unlink(client)
     ws_monitor = Process.monitor(client)
 
@@ -126,13 +148,17 @@ defmodule DxCore.Agents.CLI.Agent do
       struct!(__MODULE__, %{
         client: client,
         ws_monitor: ws_monitor,
+        connect: connect,
         agent_id: config.agent_id,
         session_id: config.session_id,
         work_dir: config.work_dir,
         adapter: config.adapter,
         capabilities: config.capabilities,
         command_template: config.command_template,
-        org_slug: config.org_slug
+        org_slug: config.org_slug,
+        reconnect_timeout_ms: reconnect_timeout_ms,
+        task_grace_ms: Map.get(config, :task_grace_ms, LostCoordinator.task_grace_ms()),
+        kill_after_ms: Map.get(config, :kill_after_ms, LostCoordinator.kill_after_ms())
       })
 
     log(state, "Waiting for connection...")
@@ -201,10 +227,13 @@ defmodule DxCore.Agents.CLI.Agent do
 
     log(state, safe_line)
 
-    DxCore.Agents.WsClient.push(state.client, "task_log", %{
-      "task_id" => state.current_task_id,
-      "line" => safe_line
-    })
+    # With the coordinator lost (no client), the line only goes to the log.
+    if state.client do
+      DxCore.Agents.WsClient.push(state.client, "task_log", %{
+        "task_id" => state.current_task_id,
+        "line" => safe_line
+      })
+    end
 
     {:noreply, state, :infinity}
   end
@@ -213,12 +242,12 @@ defmodule DxCore.Agents.CLI.Agent do
     duration_ms = System.monotonic_time(:millisecond) - state.start_time
     log(state, "Task #{state.current_task_id} exit=#{exit_code} (#{duration_ms}ms)")
 
-    DxCore.Agents.WsClient.push(state.client, "task_result", %{
+    result = %{
       "task_id" => state.current_task_id,
       "run_id" => state.current_run_id,
       "exit_code" => exit_code,
       "duration_ms" => duration_ms
-    })
+    }
 
     new_state = %{
       state
@@ -228,7 +257,12 @@ defmodule DxCore.Agents.CLI.Agent do
         start_time: nil
     }
 
-    {:noreply, new_state}
+    if state.client do
+      DxCore.Agents.WsClient.push(state.client, "task_result", result)
+      {:noreply, new_state}
+    else
+      reconnect_to_report(new_state, result)
+    end
   end
 
   def handle_info({:channel_message, _topic, "shutdown", %{"reason" => reason}}, state) do
@@ -254,7 +288,40 @@ defmodule DxCore.Agents.CLI.Agent do
     {:noreply, state}
   end
 
+  # Back after losing the coordinator mid-task: announce the finished task as
+  # this agent's (so the coordinator keeps it here), report its result, and
+  # stop once that push is on the wire, as the agent would have when it lost
+  # the coordinator idle.
+  def handle_info({:joined, _topic}, %{lost_result: %{} = result} = state) do
+    DxCore.Agents.WsClient.push(state.client, "agent_ready", %{
+      "agent_id" => state.agent_id,
+      "capabilities" => state.capabilities,
+      "current_task" => Map.take(result, ["task_id", "run_id"])
+    })
+
+    reply =
+      try do
+        DxCore.Agents.WsClient.push_sync(state.client, "task_result", result)
+      catch
+        :exit, reason -> {:error, reason}
+      end
+
+    case reply do
+      :ok ->
+        log(state, "Reported task #{result["task_id"]}'s result after reconnecting. Exiting.")
+
+      error ->
+        log(
+          state,
+          "Could not report task #{result["task_id"]}'s result (#{inspect(error)}). Exiting."
+        )
+    end
+
+    {:stop, :normal, state}
+  end
+
   def handle_info({:joined, _topic}, state) do
+    state = %{state | lost_at: nil}
     tags = state.capabilities["tags"] || %{}
 
     if tags == %{} do
@@ -291,13 +358,94 @@ defmodule DxCore.Agents.CLI.Agent do
     {:noreply, state}
   end
 
+  # Every failed reconnect attempt says so again; the first one starts the
+  # clock a running task is stopped by.
   def handle_info({:disconnected, reason}, state) do
     log(state, "Lost connection: #{inspect(reason)}, waiting for reconnect...")
-    {:noreply, state}
+    {:noreply, %{state | lost_at: state.lost_at || System.monotonic_time(:millisecond)}}
   end
 
   # Port messages arriving after exit_status (port already cleared from state)
   def handle_info({_port, {:data, _}}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, _pid, {:shutdown, :reconnect_timeout}},
+        %{ws_monitor: ref, lost_result: %{} = result} = state
+      ) do
+    log(
+      state,
+      "Coordinator still unreachable: could not report task #{result["task_id"]}'s result " <>
+        "(exit #{result["exit_code"]}). Exiting."
+    )
+
+    {:stop, :normal, state}
+  end
+
+  # A running task goes on for `task_grace_ms` past the reconnect window:
+  # killing it mid-way (a `pulumi up`) left half-applied state that the next
+  # deploy made worse (#12435). It is stopped after that, since the
+  # coordinator holds the task for this agent only so long (LostCoordinator).
+  # The agent reconnects once the task has ended, to report its result.
+  def handle_info(
+        {:DOWN, ref, :process, _pid, {:shutdown, :reconnect_timeout}},
+        %{ws_monitor: ref, current_port: port} = state
+      )
+      when port != nil do
+    now = System.monotonic_time(:millisecond)
+    lost_at = state.lost_at || now - state.reconnect_timeout_ms
+    stop_in = max(lost_at + state.reconnect_timeout_ms + state.task_grace_ms - now, 0)
+
+    log(
+      state,
+      "Coordinator unreachable after reconnect timeout. Letting task #{state.current_task_id} " <>
+        "run for up to #{div(stop_in, 1000)} s more, then reconnecting to report it."
+    )
+
+    Process.send_after(self(), {:lost_task_stop, state.current_task_id}, stop_in)
+    {:noreply, %{state | client: nil, ws_monitor: nil, lost_at: lost_at}, :infinity}
+  end
+
+  def handle_info(
+        {:lost_task_stop, task_id},
+        %{client: nil, current_task_id: task_id, current_port: port} = state
+      )
+      when port != nil do
+    log(
+      state,
+      "Task #{task_id} is still running and the coordinator is still unreachable. " <>
+        "Sending it SIGTERM; SIGKILL in #{div(state.kill_after_ms, 1000)} s if it is still running."
+    )
+
+    signal_port(port, "TERM")
+    Process.send_after(self(), {:lost_task_kill, task_id}, state.kill_after_ms)
+    {:noreply, state, :infinity}
+  end
+
+  def handle_info(
+        {:lost_task_kill, task_id},
+        %{client: nil, current_task_id: task_id, current_port: port} = state
+      )
+      when port != nil do
+    log(state, "Task #{task_id} is still running after SIGTERM. Sending it SIGKILL.")
+    kill_port(port)
+
+    result = %{
+      "task_id" => task_id,
+      "run_id" => state.current_run_id,
+      "exit_code" => -1,
+      "duration_ms" => System.monotonic_time(:millisecond) - state.start_time
+    }
+
+    reconnect_to_report(
+      %{state | current_port: nil, current_task_id: nil, current_run_id: nil, start_time: nil},
+      result
+    )
+  end
+
+  # The task ended before its stop came due.
+  def handle_info({stop, _task_id}, state) when stop in [:lost_task_stop, :lost_task_kill] do
     {:noreply, state}
   end
 
@@ -320,6 +468,25 @@ defmodule DxCore.Agents.CLI.Agent do
   end
 
   # --- Private Helpers ---
+
+  defp reconnect_to_report(state, result) do
+    log(state, "Reconnecting to report task #{result["task_id"]}'s result...")
+
+    case state.connect.() do
+      {:ok, client} ->
+        Process.unlink(client)
+        ws_monitor = Process.monitor(client)
+        {:noreply, %{state | client: client, ws_monitor: ws_monitor, lost_result: result}}
+
+      error ->
+        log(
+          state,
+          "Could not reconnect (#{inspect(error)}): task #{result["task_id"]}'s result is lost. Exiting."
+        )
+
+        {:stop, :normal, state}
+    end
+  end
 
   defp current_task(%{current_task_id: task_id, current_run_id: run_id})
        when is_binary(task_id) and is_binary(run_id),
@@ -348,12 +515,14 @@ defmodule DxCore.Agents.CLI.Agent do
   defp scrub_utf8(<<_invalid, rest::binary>>, acc),
     do: scrub_utf8(rest, <<acc::binary, "�">>)
 
+  # SIGKILL goes to the task's whole process tree: a killed parent does not
+  # take its children with it, so a `pulumi up` under `pnpm` would run on. The
+  # tree is read before the kill, while the children are still the task's.
+  # The port is closed first, since its `exit_status` waits for EOF on the
+  # task's output, which an orphan that keeps it open never sends.
   defp kill_port(port) do
-    os_pid =
-      case Port.info(port, :os_pid) do
-        {:os_pid, pid} -> pid
-        nil -> nil
-      end
+    os_pid = port_os_pid(port)
+    tree = if os_pid, do: [os_pid | descendants(os_pid)], else: []
 
     try do
       Port.close(port)
@@ -361,15 +530,68 @@ defmodule DxCore.Agents.CLI.Agent do
       ArgumentError -> :already_closed
     end
 
-    if os_pid do
-      try do
-        System.cmd("kill", ["-9", to_string(os_pid)], stderr_to_stdout: true)
-      rescue
-        _ -> :ok
-      end
-    end
+    signal_os_pids(tree, "KILL")
+  end
 
+  # SIGTERM goes to the task's own process only: the tools it runs (`turbo`,
+  # `pnpm`) pass it on to theirs, and a second copy straight from the agent
+  # could turn a graceful cancel into a forced one (Pulumi stops at once on a
+  # second interrupt). The port stays open, so the task's exit arrives as
+  # `exit_status`.
+  defp signal_port(port, signal) do
+    case port_os_pid(port) do
+      nil -> :ok
+      os_pid -> signal_os_pids([os_pid], signal)
+    end
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> pid
+      nil -> nil
+    end
+  end
+
+  defp signal_os_pids([], _signal), do: :ok
+
+  defp signal_os_pids(os_pids, signal) do
+    System.cmd("kill", ["-#{signal}" | Enum.map(os_pids, &to_string/1)], stderr_to_stdout: true)
     :ok
+  rescue
+    _ -> :ok
+  end
+
+  # Every process below `os_pid`, read from `ps`; none when `ps` fails.
+  @doc false
+  def descendants(os_pid) do
+    case System.cmd("ps", ["-e", "-o", "pid=,ppid="], stderr_to_stdout: true) do
+      {out, 0} ->
+        children =
+          out
+          |> String.split("\n", trim: true)
+          |> Enum.flat_map(fn line ->
+            case String.split(line) do
+              [pid, ppid] -> [{String.to_integer(ppid), String.to_integer(pid)}]
+              _ -> []
+            end
+          end)
+          |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+        collect_descendants(Map.get(children, os_pid, []), children, [])
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp collect_descendants([], _children, acc), do: Enum.reverse(acc)
+
+  defp collect_descendants([pid | rest], children, acc) do
+    if pid in acc,
+      do: collect_descendants(rest, children, acc),
+      else: collect_descendants(Map.get(children, pid, []) ++ rest, children, [pid | acc])
   end
 
   defp open_task_port(work_dir, command, shard) do

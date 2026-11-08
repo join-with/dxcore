@@ -1,5 +1,37 @@
 # @repo/dxcore-agents-cli
 
+## 0.10.5
+
+### Patch Changes
+
+- 3f47bc3: The dxcore agent now runs each turbo task with `--log-order=stream` instead of turbo's default `--log-order=auto`, which resolves to `grouped` off a TTY and holds a task's whole output until it ends. A running task's lines now reach the agent's log (and the coordinator) as turbo prints them, so a hung step is visible instead of silent for the task's whole run.
+
+## 0.10.4
+
+### Patch Changes
+
+- d3b06ee: repo-cli now comes from the release pinned in `.config/mise/conf.d/repo-cli.toml` (#12296): the package no longer links `@repo/repo-cli`, no task waits for its build, and every task whose script runs repo-cli lists the pin as an input, so a pin bump reruns exactly those tasks.
+
+## 0.10.3
+
+### Patch Changes
+
+- Updated dependencies [61b866d]
+  - @repo/repo-cli@0.15.1
+
+## 0.10.2
+
+### Patch Changes
+
+- 36cb2ce: A dxcore agent that loses the coordinator in the middle of a task no longer kills it 30 seconds later (#12435), and the coordinator no longer hands that task to a second agent while the first still runs it.
+  - The agent lets the task run for 90 seconds past its 30-second reconnect window, then sends it SIGTERM, and SIGKILL to its whole process tree 60 seconds after that if it is still running. Once the task has ended, the agent reconnects, tells the coordinator it still holds the task, reports the result and exits. If the coordinator is still unreachable after another 30 seconds, it logs the result it could not report and exits. An idle agent still exits at the 30-second reconnect timeout. `DxCore.Agents.CLI.LostCoordinator` owns these numbers.
+  - The scheduler holds a dropped agent's tasks for 3.5 minutes (`@default_lease_grace_ms` 210,000, up from 30,000): the agent's 30 + 90 + 60 seconds, plus 30 to report. A CLI test reads the scheduler's default and fails if it drops below what the agent needs. `DxCore.Core.Scheduler.default_lease_grace_ms/0` is new, and the SaaS coordinator's `:lease_grace_ms` now defaults to it. The longer hold applies to leases restored after a coordinator restart too: a task whose agent never comes back waits 3.5 minutes before it goes to another agent.
+  - `WsClient.push_sync/3` is new: it returns once a push is on the wire, without waiting for a reply the coordinator never sends.
+
+- Updated dependencies [22174eb]
+- Updated dependencies [e19403d]
+  - @repo/repo-cli@0.15.0
+
 ## 0.10.1
 
 ### Patch Changes

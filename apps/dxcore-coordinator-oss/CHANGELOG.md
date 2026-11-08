@@ -1,5 +1,31 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.4
+
+### Patch Changes
+
+- d3b06ee: repo-cli now comes from the release pinned in `.config/mise/conf.d/repo-cli.toml` (#12296): the package no longer links `@repo/repo-cli`, no task waits for its build, and every task whose script runs repo-cli lists the pin as an input, so a pin bump reruns exactly those tasks.
+- Updated dependencies [d3b06ee]
+  - @repo/dxcore-core@0.11.2
+
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [61b866d]
+  - @repo/repo-cli@0.15.1
+  - @repo/dxcore-core@0.11.1
+
+## 0.6.2
+
+### Patch Changes
+
+- Updated dependencies [36cb2ce]
+- Updated dependencies [22174eb]
+- Updated dependencies [e19403d]
+  - @repo/dxcore-core@0.11.1
+  - @repo/repo-cli@0.15.0
+
 ## 0.6.1
 
 ### Patch Changes
