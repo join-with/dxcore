@@ -112,7 +112,10 @@ defmodule DxCore.Core.Scheduler.TopologyEvaluator do
     endpoint = state.context[:endpoint]
     dispatcher_topic = state.context[:dispatcher_topic]
 
-    if run_status in [:complete, :failed] and endpoint != nil and dispatcher_topic != nil do
+    # A managed run (hard_stop_at set) is announced once, with its result, by
+    # the coordinator's RunEnd after the scheduler's stop hook (#15513).
+    if run_status in [:complete, :failed] and endpoint != nil and dispatcher_topic != nil and
+         state.hard_stop_at == nil do
       payload = %{
         "run_id" => state.run_id,
         "status" => to_string(run_status),

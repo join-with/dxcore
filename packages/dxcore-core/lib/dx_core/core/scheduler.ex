@@ -11,6 +11,16 @@ defmodule DxCore.Core.Scheduler do
 
   Accepts an optional `context:` map (default `%{}`) that is passed to
   all plugin callbacks for tenant-scoped metadata.
+
+  A coordinator-owned run (#15513) also takes `deadline_at:` and
+  `hard_stop_at:` (both or neither). At `deadline_at` the scheduler drains;
+  it asks once for the run to end through the context's
+  `on_run_stopped: {module, function, extra_args}`, called as
+  `apply(module, function, [run_id, reason, context | extra_args])` with
+  `reason` one of `:drained` (draining, nothing running, run not finished),
+  `:hard_stop` (`hard_stop_at` reached, run not finished) or `:failed`
+  (topology evaluation failed the run). The hook runs in the scheduler
+  process, so it must not call the scheduler back.
   """
 
   # :transient: a scheduler that gives up on loading its run's state stops
@@ -181,6 +191,12 @@ defmodule DxCore.Core.Scheduler do
         Keyword.get(opts, :state_load_backoff_ms, @default_state_load_backoff_ms)
     }
 
+    restore =
+      Map.merge(
+        restore,
+        deadlines!(Keyword.get(opts, :deadline_at), Keyword.get(opts, :hard_stop_at))
+      )
+
     GenServer.start_link(
       __MODULE__,
       {graph, run_id, session_id, plugin, context, failure_strategy, skip_expand?, rehydrate_from,
@@ -335,6 +351,11 @@ defmodule DxCore.Core.Scheduler do
       failure_strategy: failure_strategy,
       failed_fast: false,
       draining: false,
+      # #15513: a coordinator-owned run drains at deadline_at and is stopped
+      # at hard_stop_at; nil for every other run.
+      deadline_at: restore.deadline_at,
+      hard_stop_at: restore.hard_stop_at,
+      stop_requested: false,
       topology_check: Map.get(context, :topology_check, "infer"),
       expected_agents: get_in(context, [:topology, "agents"]),
       topology_timer: nil,
@@ -357,7 +378,7 @@ defmodule DxCore.Core.Scheduler do
   def handle_continue({:restore, rehydrate_from, state_loader, backoff_ms}, state) do
     case load_state_retrying(state_loader, state.run_id, backoff_ms) do
       {:ok, loaded} ->
-        {:noreply, restore(state, loaded, rehydrate_from)}
+        {:noreply, state |> restore(loaded, rehydrate_from) |> schedule_deadlines()}
 
       {:error, reason} ->
         {:stop, {:shutdown, {:state_load_failed, reason}}, state}
@@ -440,7 +461,8 @@ defmodule DxCore.Core.Scheduler do
   @impl true
   def handle_call({:report_result, task_id, agent_id, result}, _from, state) do
     {reply, state} = do_report_result(task_id, agent_id, result, state)
-    {:reply, reply, release_tasks_held_by(state, agent_id, task_id, :reported_other)}
+    state = release_tasks_held_by(state, agent_id, task_id, :reported_other)
+    {:reply, reply, maybe_stop(state, :drained)}
   end
 
   @impl true
@@ -454,7 +476,8 @@ defmodule DxCore.Core.Scheduler do
 
   @impl true
   def handle_call({:release_agent, agent_id, keep_task_id}, _from, state) do
-    {:reply, :ok, release_tasks_held_by(state, agent_id, keep_task_id, :released)}
+    state = release_tasks_held_by(state, agent_id, keep_task_id, :released)
+    {:reply, :ok, maybe_stop(state, :drained)}
   end
 
   @impl true
@@ -486,7 +509,7 @@ defmodule DxCore.Core.Scheduler do
   @impl true
   def handle_cast(:check_topology, state) do
     alias DxCore.Core.Scheduler.TopologyEvaluator
-    {:noreply, TopologyEvaluator.evaluate(state)}
+    {:noreply, state |> TopologyEvaluator.evaluate() |> maybe_stop(:failed)}
   end
 
   @impl true
@@ -550,17 +573,123 @@ defmodule DxCore.Core.Scheduler do
       }
     )
 
-    {:noreply, state}
+    {:noreply, maybe_stop(state, :drained)}
+  end
+
+  @impl true
+  def handle_info(:deadline_reached, state) do
+    :telemetry.execute([:dxcore, :scheduler, :deadline], %{count: 1}, %{
+      run_id: state.run_id,
+      kind: :drain
+    })
+
+    {:noreply, maybe_stop(%{state | draining: true}, :drained)}
+  end
+
+  @impl true
+  def handle_info(:hard_stop_reached, state) do
+    :telemetry.execute([:dxcore, :scheduler, :deadline], %{count: 1}, %{
+      run_id: state.run_id,
+      kind: :hard_stop
+    })
+
+    state = %{state | draining: true}
+
+    if run_finished?(state),
+      do: {:noreply, state},
+      else: {:noreply, maybe_request_stop(state, :hard_stop)}
   end
 
   @impl true
   def handle_info(:topology_stabilized, state) do
     alias DxCore.Core.Scheduler.TopologyEvaluator
     new_state = %{state | topology_settled: true, topology_timer: nil}
-    {:noreply, TopologyEvaluator.evaluate_assignability(new_state)}
+    {:noreply, new_state |> TopologyEvaluator.evaluate_assignability() |> maybe_stop(:failed)}
   end
 
   # ── Private helpers ─────────────────────────────────────────────────
+
+  defp deadlines!(nil, nil), do: %{deadline_at: nil, hard_stop_at: nil}
+
+  defp deadlines!(%DateTime{} = deadline_at, %DateTime{} = hard_stop_at) do
+    if DateTime.compare(hard_stop_at, deadline_at) == :lt,
+      do: raise(ArgumentError, "hard_stop_at is before deadline_at")
+
+    %{deadline_at: deadline_at, hard_stop_at: hard_stop_at}
+  end
+
+  defp deadlines!(_deadline_at, _hard_stop_at),
+    do: raise(ArgumentError, "deadline_at and hard_stop_at go together")
+
+  defp schedule_deadlines(%{deadline_at: nil} = state), do: state
+
+  defp schedule_deadlines(state) do
+    now = DateTime.utc_now()
+    Process.send_after(self(), :deadline_reached, ms_until(state.deadline_at, now))
+    Process.send_after(self(), :hard_stop_reached, ms_until(state.hard_stop_at, now))
+    state
+  end
+
+  defp ms_until(at, now), do: max(DateTime.diff(at, now, :millisecond), 0)
+
+  # Only a coordinator-owned run (one with a hard stop) asks to end, and only once.
+  defp maybe_stop(%{hard_stop_at: nil} = state, _reason), do: state
+  defp maybe_stop(%{stop_requested: true} = state, _reason), do: state
+
+  defp maybe_stop(state, :drained) do
+    running? = Enum.any?(state.tasks, fn {_id, t} -> t.status == :running end)
+
+    if state.draining and not running? and not run_finished?(state),
+      do: request_stop(state, :drained),
+      else: state
+  end
+
+  defp maybe_stop(state, :failed) do
+    if compute_run_status(state.tasks, state.failed_fast) == :failed,
+      do: request_stop(state, :failed),
+      else: state
+  end
+
+  # The hard stop asks even when a drain already did not: only once overall.
+  defp maybe_request_stop(%{hard_stop_at: nil} = state, _reason), do: state
+  defp maybe_request_stop(%{stop_requested: true} = state, _reason), do: state
+  defp maybe_request_stop(state, reason), do: request_stop(state, reason)
+
+  defp run_finished?(state), do: compute_run_status(state.tasks, state.failed_fast) != :running
+
+  # Runs in the scheduler process: the hook must hand the work to another
+  # process (the SaaS one starts a task), never call this scheduler.
+  defp request_stop(state, reason) do
+    :telemetry.execute([:dxcore, :scheduler, :run_stop_requested], %{count: 1}, %{
+      run_id: state.run_id,
+      reason: reason
+    })
+
+    case Map.get(state.context, :on_run_stopped) do
+      {module, function, args} ->
+        try do
+          apply(module, function, [state.run_id, reason, state.context | args])
+        rescue
+          e ->
+            Logger.error(
+              "on_run_stopped for run #{state.run_id} raised: " <>
+                Exception.format(:error, e, __STACKTRACE__)
+            )
+        catch
+          kind, value ->
+            Logger.error(
+              "on_run_stopped for run #{state.run_id} failed: #{inspect({kind, value})}"
+            )
+        end
+
+      nil ->
+        Logger.warning(
+          "Run #{state.run_id} reached its #{reason} stop with no on_run_stopped hook"
+        )
+    end
+
+    %{state | stop_requested: true, draining: true}
+  end
 
   defp do_report_result(task_id, agent_id, {result_atom, exit_code}, state)
        when result_atom in [:success, :failed] do
