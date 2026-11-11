@@ -1,11 +1,10 @@
 defmodule DxCore.Agents.CLI.Dispatcher.Deadline do
   @moduledoc """
-  `dxcore dispatch --deadline <time>`. At the deadline the run hands out no
-  new tasks (the coordinator's `drain_run`) and the running ones finish. Once
-  nothing runs, or `--hard-stop-after` seconds after the deadline, the
-  dispatcher cancels the rest and exits 75 (EX_TEMPFAIL): the run is
-  unfinished, not failed. A rerun dispatches only what is left, since turbo
-  cached every task that finished.
+  `dxcore dispatch --deadline <time>`. The dispatcher hands the deadline (and
+  the hard stop, `--hard-stop-after` seconds later) to the coordinator, which
+  owns the run's clock and verdict (#15513). The exit code follows the verdict:
+  0 passed, 75 (EX_TEMPFAIL) unfinished, 1 failed. A rerun dispatches only
+  what is left, since turbo cached every task that finished.
   """
 
   @unfinished_exit 75
@@ -51,13 +50,14 @@ defmodule DxCore.Agents.CLI.Dispatcher.Deadline do
        "--hard-stop-after must be whole seconds from 0 to #{@max_hard_stop_after_s} " <>
          "(got #{inspect(value)})"}
 
-  @doc "Milliseconds from `now` to the drain and to the hard stop."
-  @spec delays(DateTime.t(), non_neg_integer(), DateTime.t()) ::
-          {non_neg_integer(), non_neg_integer()}
-  def delays(%DateTime{} = deadline, hard_stop_after_ms, %DateTime{} = now)
-      when is_integer(hard_stop_after_ms) and hard_stop_after_ms >= 0 do
-    until_deadline = max(DateTime.diff(deadline, now, :millisecond), 0)
-    {until_deadline, until_deadline + hard_stop_after_ms}
+  @doc """
+  Milliseconds from `now` to the dispatcher's first read of the run's verdict:
+  `grace_ms` after the coordinator's hard stop, which ends every deadline run.
+  """
+  @spec verdict_backstop_ms(DateTime.t(), non_neg_integer(), non_neg_integer(), DateTime.t()) ::
+          non_neg_integer()
+  def verdict_backstop_ms(%DateTime{} = deadline, hard_stop_after_ms, grace_ms, %DateTime{} = now) do
+    max(DateTime.diff(deadline, now, :millisecond) + hard_stop_after_ms + grace_ms, 0)
   end
 
   @doc "The process exit code for the dispatcher's stop reason."
@@ -65,10 +65,4 @@ defmodule DxCore.Agents.CLI.Dispatcher.Deadline do
   def exit_code(:normal), do: 0
   def exit_code({:shutdown, :unfinished}), do: @unfinished_exit
   def exit_code(_reason), do: 1
-
-  @spec left_line(non_neg_integer() | nil, non_neg_integer()) :: String.t()
-  def left_line(to_run, finished) when is_integer(to_run),
-    do: "#{max(to_run - finished, 0)} of #{to_run} tasks left"
-
-  def left_line(nil, finished), do: "#{finished} tasks finished, the number left is unknown"
 end

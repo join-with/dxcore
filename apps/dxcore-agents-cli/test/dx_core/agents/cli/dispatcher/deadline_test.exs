@@ -36,15 +36,23 @@ defmodule DxCore.Agents.CLI.Dispatcher.DeadlineTest do
     end
   end
 
-  describe "delays/3" do
-    test "a future deadline: both timers count from now" do
-      assert Deadline.delays(~U[2026-10-25 10:12:00Z], 120_000, ~U[2026-10-25 10:00:00Z]) ==
-               {720_000, 840_000}
+  describe "verdict_backstop_ms/4" do
+    test "counts from now to the hard stop plus the grace" do
+      assert Deadline.verdict_backstop_ms(
+               ~U[2026-11-11 10:12:00Z],
+               120_000,
+               15_000,
+               ~U[2026-11-11 10:00:00Z]
+             ) == 855_000
     end
 
-    test "a deadline already past: drain now, hard stop after the grace" do
-      assert Deadline.delays(~U[2026-10-25 10:00:00Z], 120_000, ~U[2026-10-25 10:05:00Z]) ==
-               {0, 120_000}
+    test "a deadline long past: the grace after the hard stop, never negative" do
+      assert Deadline.verdict_backstop_ms(
+               ~U[2026-11-11 10:00:00Z],
+               0,
+               15_000,
+               ~U[2026-11-11 11:00:00Z]
+             ) == 0
     end
   end
 
@@ -55,18 +63,9 @@ defmodule DxCore.Agents.CLI.Dispatcher.DeadlineTest do
       assert Deadline.exit_code({:shutdown, :failed}) == 1
       assert Deadline.exit_code({:shutdown, :timeout}) == 1
       assert Deadline.exit_code({:shutdown, :submit_failed}) == 1
+      assert Deadline.exit_code({:shutdown, :deadline_unsupported}) == 1
+      assert Deadline.exit_code({:shutdown, :session_finished}) == 1
       assert Deadline.exit_code(:killed) == 1
-    end
-  end
-
-  describe "left_line/2" do
-    test "counts what is left of the tasks to run" do
-      assert Deadline.left_line(5, 2) == "3 of 5 tasks left"
-      assert Deadline.left_line(5, 7) == "0 of 5 tasks left"
-    end
-
-    test "says so when the coordinator gave no total" do
-      assert Deadline.left_line(nil, 2) == "2 tasks finished, the number left is unknown"
     end
   end
 end

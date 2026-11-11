@@ -275,7 +275,10 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
             run_id: "r1",
             timeout_ms: 60_000,
             tasks: nil,
-            connected_agents: 0
+            connected_agents: 0,
+            managed: false,
+            result_file: nil,
+            read_run: fn _, _, _ -> {:error, :unused} end
           },
           overrides
         )
@@ -287,7 +290,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
 
       msg =
         {:channel_message, "dispatcher:s1", "run_complete",
-         %{"run_id" => "r1", "status" => "success"}}
+         %{"run_id" => "r1", "status" => "complete"}}
 
       assert {:stop, :normal, ^state} = Dispatcher.handle_info(msg, state)
     end
@@ -538,10 +541,10 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(msg, state)
     end
 
-    test "topic_closed with session_finished exits normally" do
+    test "topic_closed with session_finished and no verdict fails" do
       state = base_state()
 
-      assert {:stop, :normal, ^state} =
+      assert {:stop, {:shutdown, :session_finished}, ^state} =
                Dispatcher.handle_info(
                  {:topic_closed, "dispatcher:s1",
                   {:failed_to_join, %{"reason" => "session_finished"}}},
@@ -832,7 +835,8 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
             session_id: "s1",
             run_id: "r1",
             timeout_ms: 60_000,
-            tasks: nil
+            tasks: nil,
+            read_run: fn _, _, _ -> {:error, :unused} end
           },
           overrides
         )
@@ -908,19 +912,15 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       assert length(Regex.scan(~r/Task b /, output)) == 1
     end
 
-    test "a snapshot of a finished run ends the dispatch with the run's outcome" do
+    test "a snapshot of a finished run keeps waiting for the run_complete behind it" do
       capture_io(fn ->
-        assert {:stop, :normal, _} =
-                 Dispatcher.handle_info(
-                   snapshot("complete", [task("a", "done")], 0),
-                   rejoin_state()
-                 )
-
-        assert {:stop, {:shutdown, :failed}, _} =
-                 Dispatcher.handle_info(
-                   snapshot("failed", [task("a", "failed")], 0),
-                   rejoin_state()
-                 )
+        for status <- ["complete", "failed", "cancelled"] do
+          assert {:noreply, _, 60_000} =
+                   Dispatcher.handle_info(
+                     snapshot(status, [task("a", "done")], 0),
+                     rejoin_state()
+                   )
+        end
       end)
     end
 
@@ -952,7 +952,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     end
   end
 
-  describe "--deadline (#12312)" do
+  describe "a run the coordinator owns (#15513)" do
     # A WsClient stand-in. It answers every push_and_wait with `reply` and
     # tells the test which event and payload were pushed.
     defp answering_client(reply) do
@@ -964,7 +964,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       receive do
         {:"$gen_call", from, {:push_and_wait, event, payload}} ->
           send(test_pid, {:pushed, event, payload})
-          GenServer.reply(from, reply)
+          GenServer.reply(from, if(is_function(reply), do: reply.(event, payload), else: reply))
 
         {:"$gen_cast", msg} ->
           send(test_pid, {:ws_cast, msg})
@@ -980,245 +980,512 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
 
     defp lines(output), do: String.split(output, "\n", trim: true)
 
-    test "a run submitted after its deadline gets the drain and the hard stop at once" do
+    @passed %{
+      "result" => "passed",
+      "total" => 4,
+      "cached" => 0,
+      "left" => 0,
+      "failed" => 0,
+      "failed_tasks" => []
+    }
+
+    defp complete(result, status \\ "complete"),
+      do:
+        {:channel_message, "t", "run_complete",
+         %{"run_id" => "r", "status" => status, "result" => result}}
+
+    test "submits deadline_at and hard_stop_at and keeps no timer" do
+      deadline = ~U[2099-11-11 10:12:00Z]
+      me = self()
+
       client =
-        answering_client({:ok, %{"run_id" => "uuid-1", "total_tasks" => 5, "cached_tasks" => 2}})
+        answering_client(fn "submit_graph", payload ->
+          send(me, {:submitted, payload})
+
+          {:ok,
+           %{
+             "run_id" => "r",
+             "total_tasks" => 4,
+             "cached_tasks" => 0,
+             "deadline_at" => "2099-11-11T10:12:00Z",
+             "hard_stop_at" => "2099-11-11T10:14:00Z"
+           }}
+        end)
 
       state =
         base_state(%{
           client: client,
-          tasks: [%{"taskId" => "t1"}],
-          deadline: ~U[2020-01-01 00:00:00Z],
-          hard_stop_after_ms: 0
+          tasks: [%{"taskId" => "a#build"}],
+          managed: true,
+          deadline: deadline,
+          hard_stop_after_ms: 120_000,
+          timeout_ms: :infinity
         })
 
-      assert {:noreply, new_state, 60_000} =
-               Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
+      capture_io(fn ->
+        assert {:noreply, _state, :infinity} = Dispatcher.handle_info({:joined, "t"}, state)
+      end)
 
-      assert new_state.coordinator_run_id == "uuid-1"
-      assert new_state.to_run == 3
-      assert_receive :deadline
-      assert_receive :hard_stop
-    end
+      assert_received {:submitted,
+                       %{
+                         "deadline_at" => "2099-11-11T10:12:00Z",
+                         "hard_stop_at" => "2099-11-11T10:14:00Z"
+                       }}
 
-    test "without --deadline no timer is set" do
-      client =
-        answering_client({:ok, %{"run_id" => "uuid-1", "total_tasks" => 5, "cached_tasks" => 2}})
-
-      state = base_state(%{client: client, tasks: [%{"taskId" => "t1"}]})
-      assert {:noreply, _, 60_000} = Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
-      refute_receive :deadline, 100
+      refute_receive :deadline, 50
       refute_receive :hard_stop, 0
     end
 
-    test "at the deadline with tasks running: drain the run and keep waiting" do
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"draining" => true}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3,
-          running: MapSet.new(["t2"])
-        })
+    test "a run with no deadline sends none and keeps the idle timeout" do
+      me = self()
 
-      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(:deadline, state)
-      assert_receive {:pushed, "drain_run", %{"run_id" => "uuid-1"}}
-      assert new_state.draining == true
-      refute_receive {:pushed, "cancel_run", _}, 50
-    end
-
-    test "the last running task ends while draining: re-ask, then cancel the rest, stop unfinished" do
-      state =
-        base_state(%{
-          # Every push gets this reply: the drain's count, then cancel_run's.
-          client: answering_client({:ok, %{"draining" => true, "running" => 0}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3,
-          draining: true,
-          drain_running: 1,
-          running: MapSet.new(["t2"])
-        })
-
-      output =
-        ExUnit.CaptureIO.capture_io(fn ->
-          send(self(), {:result, Dispatcher.handle_info(completed_msg("t2", 0), state)})
+      client =
+        answering_client(fn "submit_graph", payload ->
+          send(me, {:submitted, payload})
+          {:ok, %{"run_id" => "r", "total_tasks" => 4, "cached_tasks" => 0}}
         end)
 
-      assert_receive {:result, {:stop, {:shutdown, :unfinished}, _}}
-      assert_receive {:pushed, "drain_run", %{"run_id" => "uuid-1"}}
-      assert_receive {:pushed, "cancel_run", %{"run_id" => "uuid-1"}}
-      assert "[dispatcher:s1] Unfinished at the deadline: 2 of 3 tasks left" in lines(output)
-    end
+      state = base_state(%{client: client, tasks: [%{"taskId" => "a#build"}]})
 
-    test "the last task ends while draining: wait for run_complete, don't cancel" do
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"cancelled" => true}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3,
-          draining: true,
-          finished: MapSet.new(["t1", "t2"]),
-          running: MapSet.new(["t3"])
-        })
-
-      ExUnit.CaptureIO.capture_io(fn ->
-        send(self(), {:result, Dispatcher.handle_info(completed_msg("t3", 0), state)})
+      capture_io(fn ->
+        assert {:noreply, _, 60_000} = Dispatcher.handle_info({:joined, "t"}, state)
       end)
 
-      assert_receive {:result, {:noreply, %{running: running}, 60_000}}
-      assert MapSet.size(running) == 0
-      refute_receive {:pushed, "cancel_run", _}, 50
+      assert_received {:submitted, payload}
+      refute Map.has_key?(payload, "deadline_at")
+      refute Map.has_key?(payload, "hard_stop_at")
+      refute_receive :deadline, 50
     end
 
-    test "at the deadline with nothing running: cancel at once" do
-      client = answering_client({:ok, %{}})
+    test "a coordinator that drops the deadline is refused" do
+      client =
+        answering_client(fn
+          "submit_graph", _ -> {:ok, %{"run_id" => "r", "total_tasks" => 4, "cached_tasks" => 0}}
+          "cancel_run", _ -> {:ok, %{"cancelled" => true}}
+        end)
 
       state =
         base_state(%{
           client: client,
-          coordinator_run_id: "uuid-1",
-          to_run: 4,
-          finished: MapSet.new(["a"])
+          tasks: [%{"taskId" => "a#build"}],
+          managed: true,
+          deadline: ~U[2099-11-11 10:12:00Z],
+          hard_stop_after_ms: 120_000
         })
 
-      output =
-        ExUnit.CaptureIO.capture_io(fn ->
-          send(self(), {:result, Dispatcher.handle_info(:deadline, state)})
-        end)
-
-      assert_receive {:result, {:stop, {:shutdown, :unfinished}, _}}
-      assert_receive {:pushed, "drain_run", _}
-      assert_receive {:pushed, "cancel_run", %{"run_id" => "uuid-1"}}
-      assert "[dispatcher:s1] Unfinished at the deadline: 3 of 4 tasks left" in lines(output)
-    end
-
-    test "the hard stop cancels tasks still running" do
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"cancelled" => true}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3,
-          draining: true,
-          running: MapSet.new(["t2", "t3"])
-        })
-
-      assert {:stop, {:shutdown, :unfinished}, _} = Dispatcher.handle_info(:hard_stop, state)
-      assert_receive {:pushed, "cancel_run", %{"run_id" => "uuid-1"}}
-    end
-
-    test "a failed task makes the stop failed, not unfinished" do
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"cancelled" => true}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3,
-          draining: true,
-          running: MapSet.new(["t2"])
-        })
-
-      assert {:stop, {:shutdown, :failed}, _} =
-               Dispatcher.handle_info(completed_msg("t2", 1), state)
-    end
-
-    test "a refused drain never stops the run early, even with nothing running here" do
-      state =
-        base_state(%{
-          client: answering_client({:error, %{"reason" => "unknown_run"}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3
-        })
-
-      ExUnit.CaptureIO.capture_io(fn ->
-        send(self(), {:result, Dispatcher.handle_info(:deadline, state)})
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :deadline_unsupported}, _} =
+                 Dispatcher.handle_info({:joined, "t"}, state)
       end)
 
-      assert_receive {:result, {:noreply, %{draining: true, drain_running: nil}, 60_000}}
-      refute_receive {:pushed, "cancel_run", _}, 50
+      assert_received {:pushed, "cancel_run", %{"run_id" => "r"}}
     end
 
-    test "a task the coordinator still counts as assigned keeps the run going" do
-      # Its task_started is still on its way: nothing runs here yet.
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"draining" => true, "running" => 1}}),
-          coordinator_run_id: "uuid-1",
-          to_run: 3
-        })
+    @tag :tmp_dir
+    test "a dispatch that starts at its deadline submits nothing and is unfinished", %{
+      tmp_dir: dir
+    } do
+      path = Path.join(dir, "r.json")
 
-      assert {:noreply, %{drain_running: 1}, 60_000} = Dispatcher.handle_info(:deadline, state)
-      assert_receive {:pushed, "drain_run", _}
-      refute_receive {:pushed, "cancel_run", _}, 50
+      for deadline <- [~U[2020-01-01 00:00:00Z], DateTime.add(DateTime.utc_now(), 2, :second)] do
+        state =
+          base_state(%{
+            client: answering_client(fn _, _ -> flunk("nothing is submitted") end),
+            tasks: [%{"taskId" => "a#build"}, %{"taskId" => "b#build"}, %{"taskId" => "c#build"}],
+            managed: true,
+            deadline: deadline,
+            result_file: path
+          })
+
+        output =
+          capture_io(fn ->
+            assert {:stop, {:shutdown, :unfinished}, _} =
+                     Dispatcher.handle_info({:joined, "t"}, state)
+          end)
+
+        assert output =~ "Unfinished at the deadline: 3 of 3 tasks left"
+        refute_received {:pushed, _, _}
+
+        assert Jason.decode!(File.read!(path)) == %{
+                 "result" => "unfinished",
+                 "total" => 3,
+                 "cached" => 0,
+                 "left" => 3,
+                 "failed" => 0,
+                 "failed_tasks" => []
+               }
+      end
     end
 
-    test "while draining, the run is drained again on a timer, for a rebuilt scheduler" do
-      state =
-        base_state(%{
-          client: answering_client({:ok, %{"draining" => true, "running" => 2}}),
-          coordinator_run_id: "uuid-1",
-          draining: true,
-          drain_running: 2,
-          running: MapSet.new(["t1", "t2"])
-        })
+    @tag :tmp_dir
+    test "a run with no deadline treats an unfinished verdict as a failure, quietly", %{
+      tmp_dir: dir
+    } do
+      path = Path.join(dir, "r.json")
+      unfinished = %{@passed | "result" => "unfinished", "left" => 2}
 
-      assert {:noreply, %{drain_running: 2}, 60_000} = Dispatcher.handle_info(:redrain, state)
-      assert_receive {:pushed, "drain_run", %{"run_id" => "uuid-1"}}
-      # Not draining: the timer's message does nothing.
-      assert {:noreply, _, 60_000} = Dispatcher.handle_info(:redrain, base_state())
-      refute_receive {:pushed, "drain_run", _}, 50
-    end
+      output =
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :failed}, _} =
+                   Dispatcher.handle_info(
+                     complete(unfinished, "cancelled"),
+                     base_state(%{result_file: path})
+                   )
+        end)
 
-    test "a coordinator that refuses the drain still gets the hard stop" do
-      state =
-        base_state(%{
-          client: answering_client({:error, %{"reason" => "unknown_run"}}),
-          coordinator_run_id: "uuid-1",
-          running: MapSet.new(["t2"])
-        })
+      refute output =~ "Unfinished at the deadline"
+      assert Jason.decode!(File.read!(path)) == %{unfinished | "result" => "failed"}
 
-      assert {:noreply, new_state, 60_000} = Dispatcher.handle_info(:deadline, state)
-      assert new_state.draining == true
-      assert {:stop, {:shutdown, :unfinished}, _} = Dispatcher.handle_info(:hard_stop, new_state)
+      capture_io(fn ->
+        assert {:stop, :normal, _} = Dispatcher.handle_info(complete(@passed), base_state(%{}))
+      end)
     end
 
     @tag timeout: 30_000
-    test "a coordinator that never answers is not a crash" do
-      silent = spawn_link(fn -> Process.sleep(:infinity) end)
+    test "a coordinator that drops the deadline and never answers cancel_run still stops" do
+      client =
+        answering_client(fn "submit_graph", _ ->
+          {:ok, %{"run_id" => "r", "total_tasks" => 4, "cached_tasks" => 0}}
+        end)
 
-      state =
-        base_state(%{client: silent, coordinator_run_id: "uuid-1", running: MapSet.new(["t2"])})
+      # Answers submit_graph, then goes silent on cancel_run.
+      silent = spawn_link(fn -> silent_after_submit(client) end)
 
-      assert {:stop, {:shutdown, :unfinished}, _} = Dispatcher.handle_info(:hard_stop, state)
-    end
-
-    test "run_complete cancelled while draining is unfinished; without a drain it stays normal" do
-      cancelled =
-        {:channel_message, "dispatcher:s1", "run_complete",
-         %{"run_id" => "uuid-1", "status" => "cancelled"}}
-
-      assert {:stop, {:shutdown, :unfinished}, _} =
-               Dispatcher.handle_info(cancelled, base_state(%{draining: true}))
-
-      assert {:stop, :normal, _} = Dispatcher.handle_info(cancelled, base_state())
-    end
-
-    test "a run that completes while draining passes" do
-      complete =
-        {:channel_message, "dispatcher:s1", "run_complete",
-         %{"run_id" => "uuid-1", "status" => "complete"}}
-
-      assert {:stop, :normal, _} = Dispatcher.handle_info(complete, base_state(%{draining: true}))
-    end
-
-    test "a rejoin while draining drains the run again" do
       state =
         base_state(%{
-          client: answering_client({:ok, %{"draining" => true}}),
-          coordinator_run_id: "uuid-1",
-          draining: true,
-          running: MapSet.new(["t2"])
+          client: silent,
+          tasks: [%{"taskId" => "a#build"}],
+          managed: true,
+          deadline: ~U[2099-11-11 10:12:00Z],
+          hard_stop_after_ms: 120_000
         })
 
-      assert {:noreply, _, 60_000} = Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
-      assert_receive {:pushed, "drain_run", %{"run_id" => "uuid-1"}}
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :deadline_unsupported}, _} =
+                 Dispatcher.handle_info({:joined, "t"}, state)
+      end)
+    end
+
+    defp silent_after_submit(client) do
+      receive do
+        {:"$gen_call", from, {:push_and_wait, "submit_graph", _} = call} ->
+          GenServer.reply(from, GenServer.call(client, call))
+          silent_after_submit(client)
+
+        {:"$gen_call", _from, _cancel} ->
+          Process.sleep(:infinity)
+
+        {:"$gen_cast", _} ->
+          silent_after_submit(client)
+      end
+    end
+
+    @tag :tmp_dir
+    test "no run_complete: the backstop reads the verdict after the hard stop", %{tmp_dir: dir} do
+      path = Path.join(dir, "r.json")
+      failed = %{@passed | "result" => "failed", "failed" => 1, "failed_tasks" => ["a#t"]}
+
+      client =
+        answering_client(fn "submit_graph", _ ->
+          {:ok,
+           %{
+             "run_id" => "r",
+             "total_tasks" => 4,
+             "cached_tasks" => 0,
+             "deadline_at" => "x",
+             "hard_stop_at" => "x"
+           }}
+        end)
+
+      state =
+        base_state(%{
+          client: client,
+          tasks: [%{"taskId" => "a#build"}],
+          managed: true,
+          deadline: DateTime.add(DateTime.utc_now(), 6, :second),
+          hard_stop_after_ms: 0,
+          verdict_grace_ms: 0,
+          timeout_ms: :infinity,
+          result_file: path,
+          read_run: fn _, _, _ -> {:ok, %{"run" => %{"id" => "r", "result" => failed}}} end
+        })
+
+      capture_io(fn ->
+        assert {:noreply, state, :infinity} = Dispatcher.handle_info({:joined, "t"}, state)
+        assert_receive :read_verdict, 8_000
+
+        assert {:stop, {:shutdown, :failed}, _} = Dispatcher.handle_info(:read_verdict, state)
+      end)
+
+      assert Jason.decode!(File.read!(path)) == failed
+    end
+
+    test "the backstop with no verdict keeps waiting and asks again" do
+      state =
+        base_state(%{
+          managed: true,
+          coordinator_run_id: "r",
+          timeout_ms: :infinity,
+          read_run: fn _, _, _ -> {:ok, %{"run" => %{"id" => "r", "result" => nil}}} end
+        })
+
+      assert {:noreply, _, :infinity} = Dispatcher.handle_info(:read_verdict, state)
+    end
+
+    test "a rejoin reads the run once; a verdict ends the dispatch" do
+      state =
+        base_state(%{
+          managed: true,
+          coordinator_run_id: "r",
+          read_run: fn _, _, _ -> {:ok, %{"run" => %{"id" => "r", "result" => @passed}}} end
+        })
+
+      capture_io(fn ->
+        assert {:stop, :normal, _} = Dispatcher.handle_info({:joined, "t"}, state)
+      end)
+    end
+
+    test "a verdict for another run, or before the run has an id, is no result" do
+      read = fn _, _, _ -> {:ok, %{"run" => %{"id" => "other", "result" => @passed}}} end
+
+      assert {:noreply, _, 60_000} =
+               Dispatcher.handle_info(
+                 {:joined, "t"},
+                 base_state(%{coordinator_run_id: "r", read_run: read})
+               )
+
+      msg = {:channel_message, "t", "run_complete", %{"status" => "complete"}}
+
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :failed}, _} =
+                 Dispatcher.handle_info(
+                   msg,
+                   base_state(%{
+                     managed: true,
+                     coordinator_run_id: nil,
+                     read_run: fn _, _, _ ->
+                       {:ok, %{"run" => %{"id" => nil, "result" => @passed}}}
+                     end
+                   })
+                 )
+      end)
+    end
+
+    @tag :tmp_dir
+    test "a submit refused for a past deadline_at is unfinished, too-far and other refusals fail",
+         %{
+           tmp_dir: dir
+         } do
+      path = Path.join(dir, "r.json")
+
+      past =
+        answering_client(fn "submit_graph", _ ->
+          {:error,
+           %{
+             "reason" => "invalid_deadline",
+             "field" => "deadline_at",
+             "message" => "is in the past"
+           }}
+        end)
+
+      too_far =
+        answering_client(fn "submit_graph", _ ->
+          {:error,
+           %{
+             "reason" => "invalid_deadline",
+             "field" => "deadline_at",
+             "message" => "is more than 60 minutes ahead"
+           }}
+        end)
+
+      other =
+        answering_client(fn "submit_graph", _ ->
+          {:error, %{"reason" => "invalid_deadline", "field" => "hard_stop_at", "message" => "m"}}
+        end)
+
+      base = %{
+        tasks: [%{"taskId" => "a#build"}, %{"taskId" => "b#build"}],
+        managed: true,
+        deadline: ~U[2099-11-11 10:12:00Z],
+        hard_stop_after_ms: 120_000,
+        result_file: path
+      }
+
+      output =
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :unfinished}, _} =
+                   Dispatcher.handle_info(
+                     {:joined, "t"},
+                     base_state(Map.put(base, :client, past))
+                   )
+        end)
+
+      assert output =~ "Unfinished at the deadline: 2 of 2 tasks left"
+      assert Jason.decode!(File.read!(path))["result"] == "unfinished"
+
+      for client <- [too_far, other] do
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :submit_failed}, _} =
+                   Dispatcher.handle_info(
+                     {:joined, "t"},
+                     base_state(Map.put(base, :client, client))
+                   )
+        end)
+      end
+    end
+
+    @tag :tmp_dir
+    test "exits on the verdict in run_complete and writes it", %{tmp_dir: dir} do
+      path = Path.join(dir, "r.json")
+      state = base_state(%{managed: true, result_file: path})
+
+      capture_io(fn ->
+        assert {:stop, :normal, _} = Dispatcher.handle_info(complete(@passed), state)
+      end)
+
+      assert Jason.decode!(File.read!(path)) == @passed
+
+      unfinished = %{@passed | "result" => "unfinished", "left" => 3}
+
+      output =
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :unfinished}, _} =
+                   Dispatcher.handle_info(complete(unfinished, "failed"), state)
+        end)
+
+      assert output =~ "Unfinished at the deadline: 3 of 4 tasks left"
+      assert Jason.decode!(File.read!(path))["result"] == "unfinished"
+
+      failed = %{@passed | "result" => "failed", "failed" => 1, "failed_tasks" => ["a#test"]}
+
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :failed}, _} =
+                 Dispatcher.handle_info(complete(failed, "failed"), state)
+      end)
+    end
+
+    test "with no verdict in run_complete, a deadline run reads it from the coordinator" do
+      me = self()
+
+      read = fn url, token, sid ->
+        send(me, {:read, url, token, sid})
+
+        {:ok,
+         %{
+           "run" => %{
+             "id" => "coord-r",
+             "result" => %{@passed | "result" => "unfinished", "left" => 1}
+           }
+         }}
+      end
+
+      state =
+        base_state(%{
+          managed: true,
+          read_run: read,
+          coordinator_run_id: "coord-r",
+          coordinator_url: "http://c",
+          token: "tok"
+        })
+
+      msg =
+        {:channel_message, "t", "run_complete", %{"run_id" => "coord-r", "status" => "failed"}}
+
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :unfinished}, _} = Dispatcher.handle_info(msg, state)
+      end)
+
+      assert_received {:read, "http://c", "tok", "s1"}
+    end
+
+    test "a deadline run with no verdict anywhere fails, also for another run's verdict" do
+      msg = {:channel_message, "t", "run_complete", %{"status" => "complete"}}
+      other_run = {:ok, %{"run" => %{"id" => "other", "result" => @passed}}}
+
+      for read <- [{:error, {:http, 404}}, other_run, {:ok, %{"run" => nil}}] do
+        state =
+          base_state(%{managed: true, coordinator_run_id: "r", read_run: fn _, _, _ -> read end})
+
+        capture_io(fn ->
+          assert {:stop, {:shutdown, :failed}, _} = Dispatcher.handle_info(msg, state)
+        end)
+      end
+    end
+
+    test "a legacy run_complete: complete passes, cancelled or failed fails" do
+      state = base_state(%{})
+
+      for {status, expected} <- [
+            {"complete", :normal},
+            {"cancelled", {:shutdown, :failed}},
+            {"failed", {:shutdown, :failed}}
+          ] do
+        msg = {:channel_message, "t", "run_complete", %{"status" => status}}
+
+        capture_io(fn ->
+          assert {:stop, ^expected, _} = Dispatcher.handle_info(msg, state)
+        end)
+      end
+    end
+
+    test "a finished session on rejoin reads the verdict, else fails" do
+      refused = {:topic_closed, "t", {:failed_to_join, %{"reason" => "session_finished"}}}
+
+      with_verdict =
+        base_state(%{
+          managed: true,
+          coordinator_run_id: "r",
+          read_run: fn _, _, _ -> {:ok, %{"run" => %{"id" => "r", "result" => @passed}}} end
+        })
+
+      capture_io(fn ->
+        assert {:stop, :normal, _} = Dispatcher.handle_info(refused, with_verdict)
+      end)
+
+      without = base_state(%{read_run: fn _, _, _ -> {:error, {:http, 404}} end})
+
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :session_finished}, _} =
+                 Dispatcher.handle_info(refused, without)
+      end)
+    end
+
+    test "a refused resume reads the verdict too" do
+      refused = {:topic_closed, "t", {:failed_to_join, %{"reason" => "run_not_found"}}}
+      unfinished = %{@passed | "result" => "unfinished", "left" => 2}
+
+      state =
+        base_state(%{
+          managed: true,
+          coordinator_run_id: "r",
+          read_run: fn _, _, _ -> {:ok, %{"run" => %{"id" => "r", "result" => unfinished}}} end
+        })
+
+      capture_io(fn ->
+        assert {:stop, {:shutdown, :unfinished}, _} = Dispatcher.handle_info(refused, state)
+      end)
+    end
+
+    test "a task_log line is still printed (the gate log keeps every task's output)" do
+      out =
+        capture_io(fn ->
+          Dispatcher.handle_info(
+            {:channel_message, "t", "task_log",
+             %{"agent_id" => "ag", "line" => "vitest: 3 passed"}},
+            base_state(%{})
+          )
+        end)
+
+      assert out =~ "vitest: 3 passed"
+    end
+
+    test "a task with its own requirements and no directory keeps them" do
+      [task] =
+        Dispatcher.resolve_requirements([
+          %{"taskId" => "a#e2e", "task" => "e2e", "requirements" => %{"docker" => true}}
+        ])
+
+      assert task["requirements"] == %{"docker" => true}
     end
 
     test "a replayed snapshot records the tasks still running" do
