@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.1
+
+### Patch Changes
+
+- 35cf076: The turbo graph keeps a no-script task's edges when it drops the task: a test that reaches its package's `build` only through `test:binary` now waits on that `build`, and a failed `build` skips it (#15603).
+
 ## 0.11.0
 
 ### Minor Changes
