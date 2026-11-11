@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.0
+
+### Minor Changes
+
+- 5718833: `dispatch --deadline` hands the deadline and hard stop to the coordinator and exits on its verdict (passed 0, unfinished 75, failed 1); `--result-file` writes the verdict as JSON. With `--deadline`, `--timeout` is ignored. A dispatch that starts at or past its deadline submits nothing and ends unfinished. A cancelled run or a finished session no longer exits 0.
+
 ## 0.10.5
 
 ### Patch Changes
