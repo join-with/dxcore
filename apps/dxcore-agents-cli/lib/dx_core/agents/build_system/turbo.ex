@@ -8,11 +8,11 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
     case Jason.decode(json) do
       {:ok, %{"tasks" => tasks}} when is_list(tasks) ->
         {dropped, kept} = Enum.split_with(tasks, &nonexistent_task?/1)
-        dropped_ids = MapSet.new(dropped, & &1["taskId"])
+        dropped = Map.new(dropped, &{&1["taskId"], &1})
 
         tasks =
           kept
-          |> Enum.map(&prune_dependencies(&1, dropped_ids))
+          |> Enum.map(&contract_edges(&1, dropped))
           |> Enum.map(&normalize_task/1)
 
         {:ok, tasks}
@@ -42,18 +42,38 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
   defp nonexistent_task?(%{"command" => "<NONEXISTENT>"}), do: true
   defp nonexistent_task?(_), do: false
 
-  # A dropped <NONEXISTENT> task is a no-op (no package script) — logically it is
-  # already done. Remove its id from surviving tasks' dependency lists so the
-  # coordinator doesn't see a dependency on a task absent from the graph and
-  # block the dependent forever. See #4154.
-  defp prune_dependencies(task, dropped_ids) do
-    case task["dependencies"] do
-      deps when is_list(deps) ->
-        Map.put(task, "dependencies", Enum.reject(deps, &MapSet.member?(dropped_ids, &1)))
+  # A dropped <NONEXISTENT> task is a no-op (no package script), so it is not
+  # dispatched (#4154). Its edges still order the graph: `test` reaches its own
+  # package's `build` only through `test:binary`, which has no script. So each
+  # dropped id in a survivor's `dependencies` becomes that task's own
+  # dependencies, and in `dependents` its dependents, through chains of
+  # dropped tasks. Pruning the id alone let every test part start at once and
+  # compile `build` itself in parallel (#15603).
+  defp contract_edges(task, dropped) do
+    Enum.reduce(["dependencies", "dependents"], task, fn key, acc ->
+      case acc[key] do
+        ids when is_list(ids) -> Map.put(acc, key, expand(ids, key, dropped, MapSet.new()))
+        _ -> acc
+      end
+    end)
+  end
 
-      _ ->
-        task
-    end
+  # `seen` holds the dropped ids already expanded on this path, so a cycle
+  # among dropped tasks ends.
+  defp expand(ids, key, dropped, seen) do
+    ids
+    |> Enum.flat_map(fn id ->
+      case dropped do
+        %{^id => gap} ->
+          if MapSet.member?(seen, id),
+            do: [],
+            else: expand(List.wrap(gap[key]), key, dropped, MapSet.put(seen, id))
+
+        _ ->
+          [id]
+      end
+    end)
+    |> Enum.uniq()
   end
 
   # Read cacheable from resolvedTaskDefinition.cache (Turbo dry-run JSON).

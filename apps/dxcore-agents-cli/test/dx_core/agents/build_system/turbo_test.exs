@@ -107,6 +107,105 @@ defmodule DxCore.Agents.BuildSystem.TurboTest do
              "expected the dropped wf#deps to be pruned from wf#lint deps, got #{inspect(lint["dependencies"])}"
     end
 
+    test "a dropped task passes its own edges on, through chains of dropped tasks" do
+      # shell#test:part-1 -> shell#test:binary (no script) -> shell#build. The
+      # part must still wait on #build, and a failed #build must still skip the
+      # part, or every part compiles #build itself in parallel (#15603).
+      # x#a -> x#gap1 -> x#gap2 -> x#b covers a chain of two dropped tasks.
+      task = fn id, command, deps, dependents ->
+        [package, name] = String.split(id, "#")
+
+        %{
+          "taskId" => id,
+          "task" => name,
+          "package" => package,
+          "hash" => id,
+          "command" => command,
+          "dependencies" => deps,
+          "dependents" => dependents
+        }
+      end
+
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            task.("shell#build", "mix compile", [], ["shell#test:binary"]),
+            task.("shell#test:binary", "<NONEXISTENT>", ["shell#build"], [
+              "shell#test:part-1",
+              "shell#test:part-2"
+            ]),
+            task.("shell#test:part-1", "mix test", ["shell#test:binary", "lib#build"], []),
+            task.("shell#test:part-2", "mix test", ["shell#test:binary"], []),
+            task.("lib#build", "tsup", [], ["shell#test:part-1"]),
+            task.("x#b", "make", [], ["x#gap2"]),
+            task.("x#gap2", "<NONEXISTENT>", ["x#b"], ["x#gap1"]),
+            task.("x#gap1", "<NONEXISTENT>", ["x#gap2"], ["x#a"]),
+            task.("x#a", "make", ["x#gap1"], [])
+          ]
+        })
+
+      assert {:ok, tasks} = Turbo.parse_graph(json)
+      by_id = Map.new(tasks, &{&1["taskId"], &1})
+
+      assert Enum.sort(Map.keys(by_id)) ==
+               [
+                 "lib#build",
+                 "shell#build",
+                 "shell#test:part-1",
+                 "shell#test:part-2",
+                 "x#a",
+                 "x#b"
+               ]
+
+      assert Enum.sort(by_id["shell#test:part-1"]["dependencies"]) == ["lib#build", "shell#build"]
+      assert by_id["shell#test:part-2"]["dependencies"] == ["shell#build"]
+
+      assert Enum.sort(by_id["shell#build"]["dependents"]) ==
+               ["shell#test:part-1", "shell#test:part-2"]
+
+      assert by_id["lib#build"]["dependents"] == ["shell#test:part-1"]
+      assert by_id["x#a"]["dependencies"] == ["x#b"]
+      assert by_id["x#b"]["dependents"] == ["x#a"]
+    end
+
+    test "a cycle among dropped tasks ends instead of looping" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "p#a",
+              "task" => "a",
+              "package" => "p",
+              "hash" => "1",
+              "command" => "make",
+              "dependencies" => ["p#n1"],
+              "dependents" => []
+            },
+            %{
+              "taskId" => "p#n1",
+              "task" => "n1",
+              "package" => "p",
+              "hash" => "2",
+              "command" => "<NONEXISTENT>",
+              "dependencies" => ["p#n2"],
+              "dependents" => ["p#a"]
+            },
+            %{
+              "taskId" => "p#n2",
+              "task" => "n2",
+              "package" => "p",
+              "hash" => "3",
+              "command" => "<NONEXISTENT>",
+              "dependencies" => ["p#n1"],
+              "dependents" => ["p#n1"]
+            }
+          ]
+        })
+
+      assert {:ok, [a]} = Turbo.parse_graph(json)
+      assert a["dependencies"] == []
+    end
+
     test "returns error for invalid JSON" do
       assert {:error, msg} = Turbo.parse_graph("no json here")
       assert msg =~ "Failed to parse turbo JSON output:"
