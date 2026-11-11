@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.12.0
+
+### Minor Changes
+
+- 309b344: The scheduler takes a deadline and a hard stop: it drains at the deadline and asks its host to end the run when nothing runs, at the hard stop, or when topology fails the run.
+
 ## 0.11.2
 
 ### Patch Changes
