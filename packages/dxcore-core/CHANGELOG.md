@@ -1,5 +1,14 @@
 # @repo/dxcore-core
 
+## 0.13.0
+
+### Minor Changes
+
+- 166edae: Runs record their timeline: each task's ready and start times, each agent's
+  job start, setup, connect and disconnect, the run's stop reason, window and
+  the planner's estimate. `DxCore.SaaS.Timeline.for_run/2` reads it back.
+  New endpoint: `POST /api/sessions/:session_id/agents/:agent_id/setup`.
+
 ## 0.12.0
 
 ### Minor Changes
