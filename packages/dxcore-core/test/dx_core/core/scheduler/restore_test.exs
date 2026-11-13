@@ -122,6 +122,17 @@ defmodule DxCore.Core.Scheduler.RestoreTest do
   defp loader(results, leases), do: {Loader, :load, [%{results: results, leases: leases}]}
 
   describe ":state_loader" do
+    test "a restored lease keeps its start and ready times (#16021)" do
+      assigned = ~U[2026-11-13 10:00:05.000000Z]
+      ready = ~U[2026-11-13 10:00:01.000000Z]
+      leased = %{task_id: "b", agent_id: "agent-1", assigned_at: assigned, ready_at: ready}
+
+      pid = start(state_loader: loader([done("a", "agent-1")], [leased]))
+
+      task = Scheduler.status(pid).tasks["b"]
+      assert {task.started_at, task.ready_at} == {assigned, ready}
+    end
+
     test "finished tasks stay finished and leased tasks stay on their agent" do
       pid = start(state_loader: loader([done("a", "agent-1")], [lease("b", "agent-1")]))
 

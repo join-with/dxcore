@@ -21,6 +21,10 @@ defmodule DxCore.Core.Scheduler do
   `:hard_stop` (`hard_stop_at` reached, run not finished) or `:failed`
   (topology evaluation failed the run). The hook runs in the scheduler
   process, so it must not call the scheduler back.
+
+  Each task records when it became ready (`ready_at`, its dependencies done)
+  and when its current assignment started (`started_at`), in wall-clock time,
+  for a coordinator that keeps a run's timeline (#16021).
   """
 
   # :transient: a scheduler that gives up on loading its run's state stops
@@ -56,6 +60,8 @@ defmodule DxCore.Core.Scheduler do
             run_id: String.t() | nil,
             agent_info: AgentInfo.t() | nil,
             started_at_mono: integer() | nil,
+            ready_at: DateTime.t() | nil,
+            started_at: DateTime.t() | nil,
             exit_code: integer() | nil,
             duration_ms: integer() | nil,
             cache_status: :hit | :miss
@@ -76,6 +82,8 @@ defmodule DxCore.Core.Scheduler do
       :run_id,
       :agent_info,
       :started_at_mono,
+      :ready_at,
+      :started_at,
       :exit_code,
       :duration_ms,
       :cache_status,
@@ -142,7 +150,7 @@ defmodule DxCore.Core.Scheduler do
     starts, before it handles any message. It returns
     `{:ok, %{results: results, leases: leases}}`: `results` in the
     `:rehydrate_from` shape, and `leases` as
-    `%{task_id: String.t(), agent_id: String.t(), assigned_at: DateTime.t() | nil}`
+    `%{task_id: String.t(), agent_id: String.t(), assigned_at: DateTime.t() | nil, ready_at: DateTime.t() | nil}`
     for tasks handed to an agent. A supervisor that restarts the scheduler
     (Horde, when it moves the process to another node on a drain or a node
     loss) restarts it from the child spec it was first started with, so the
@@ -388,10 +396,11 @@ defmodule DxCore.Core.Scheduler do
   defp restore(state, %{results: loaded_results, leases: leases}, rehydrate_from) do
     results = merge_results(loaded_results, rehydrate_from)
 
-    tasks =
+    {tasks, frontier} =
       state.tasks
       |> restore_leases(leases)
       |> apply_rehydration(results, state.failure_strategy)
+      |> with_frontier()
 
     restored =
       for {task_id, %TaskState{status: :running, assigned_to: agent_id}} <- tasks,
@@ -401,7 +410,7 @@ defmodule DxCore.Core.Scheduler do
       state
       | tasks: tasks,
         agents: agents_from_tasks(tasks),
-        frontier: compute_frontier(tasks),
+        frontier: frontier,
         failed_fast: failed_fast_from_results(results, state.failure_strategy),
         # A scheduler rebuilt from persisted progress assumes topology has
         # already settled; a fresh submit has none and uses the live timer.
@@ -439,7 +448,8 @@ defmodule DxCore.Core.Scheduler do
           | status: :running,
             assigned_to: agent_id,
             agent_info: agent_info,
-            started_at_mono: System.monotonic_time(:millisecond)
+            started_at_mono: System.monotonic_time(:millisecond),
+            started_at: DateTime.utc_now()
         }
 
         new_state = %{
@@ -727,7 +737,7 @@ defmodule DxCore.Core.Scheduler do
         end
 
       # Recompute frontier with the newly completed task
-      frontier = compute_frontier(tasks)
+      {tasks, frontier} = with_frontier(tasks)
       new_state = %{state | tasks: tasks, agents: agents, frontier: frontier}
 
       # Notify plugin of task completion (wrapped in try/catch for resilience)
@@ -771,7 +781,7 @@ defmodule DxCore.Core.Scheduler do
         end
 
       # Recompute frontier (may be empty after failure propagation)
-      frontier = compute_frontier(tasks)
+      {tasks, frontier} = with_frontier(tasks)
 
       new_state = %{
         state
@@ -937,7 +947,9 @@ defmodule DxCore.Core.Scheduler do
           | status: :running,
             assigned_to: agent_id,
             agent_info: %AgentInfo{agent_id: agent_id},
-            started_at_mono: now_mono - elapsed_ms(Map.get(lease, :assigned_at))
+            started_at_mono: now_mono - elapsed_ms(Map.get(lease, :assigned_at)),
+            started_at: Map.get(lease, :assigned_at),
+            ready_at: Map.get(lease, :ready_at)
         })
       else
         _ -> acc
@@ -1006,7 +1018,11 @@ defmodule DxCore.Core.Scheduler do
   defp release_task(state, task_id) do
     task = state.tasks[task_id]
     status = if state.failed_fast, do: :skipped, else: :pending
-    tasks = Map.put(state.tasks, task_id, %{task | status: status, assigned_to: nil})
+
+    {tasks, frontier} =
+      state.tasks
+      |> Map.put(task_id, %{task | status: status, assigned_to: nil, started_at: nil})
+      |> with_frontier()
 
     holder = task.assigned_to
 
@@ -1022,7 +1038,7 @@ defmodule DxCore.Core.Scheduler do
       state
       | tasks: tasks,
         agents: agents,
-        frontier: compute_frontier(tasks),
+        frontier: frontier,
         held_leases: Map.delete(state.held_leases, task_id)
     }
   end
@@ -1123,6 +1139,24 @@ defmodule DxCore.Core.Scheduler do
     do: Enum.any?(results, &(&1.status == :failed))
 
   defp failed_fast_from_results(_, _), do: false
+
+  # The frontier of `tasks`, with each task that just entered it stamped
+  # with when it became ready. A task keeps its first ready time: one
+  # released back to the frontier was ready since then.
+  defp with_frontier(tasks) do
+    frontier = compute_frontier(tasks)
+    now = DateTime.utc_now()
+
+    tasks =
+      Enum.reduce(frontier, tasks, fn id, acc ->
+        case acc do
+          %{^id => %TaskState{ready_at: nil} = task} -> Map.put(acc, id, %{task | ready_at: now})
+          _ -> acc
+        end
+      end)
+
+    {tasks, frontier}
+  end
 
   defp compute_frontier(tasks) do
     tasks
