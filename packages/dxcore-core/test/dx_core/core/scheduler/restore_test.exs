@@ -17,6 +17,7 @@ defmodule DxCore.Core.Scheduler.RestoreTest do
     @moduledoc false
     def load(_run_id, state), do: {:ok, state}
     def bad_shape(_run_id), do: {:ok, %{results: :nope}}
+    def garbage_results(_run_id), do: {:ok, %{results: [:not_a_result], leases: []}}
     def raises(_run_id), do: raise(__MODULE__.NeverNamedError)
 
     # Fails the first `failures` calls (a database that is briefly away),
@@ -122,6 +123,14 @@ defmodule DxCore.Core.Scheduler.RestoreTest do
   defp loader(results, leases), do: {Loader, :load, [%{results: results, leases: leases}]}
 
   describe ":state_loader" do
+    test "persisted state that cannot be applied stops the scheduler without a restart" do
+      Process.flag(:trap_exit, true)
+      pid = start(state_loader: {Loader, :garbage_results, []})
+
+      assert_receive {:EXIT, ^pid, {:shutdown, {:state_restore_failed, UndefinedFunctionError}}},
+                     1_000
+    end
+
     test "a restored lease keeps its start and ready times (#16021)" do
       assigned = ~U[2026-11-13 10:00:05.000000Z]
       ready = ~U[2026-11-13 10:00:01.000000Z]

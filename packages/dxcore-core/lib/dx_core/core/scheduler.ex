@@ -27,10 +27,10 @@ defmodule DxCore.Core.Scheduler do
   for a coordinator that keeps a run's timeline (#16021).
   """
 
-  # :transient: a scheduler that gives up on loading its run's state stops
-  # with `{:shutdown, _}` and is not restarted, so it cannot crash-loop the
-  # supervisor every run's scheduler shares (#11994). The run is rebuilt from
-  # the database on the next agent result or dispatcher rejoin. A crash is
+  # :transient: a scheduler that gives up on loading or applying its run's
+  # state stops with `{:shutdown, _}` and is not restarted, so it cannot
+  # crash-loop the supervisor every run's scheduler shares. The run is rebuilt
+  # from the database on the next agent result or dispatcher rejoin. A crash is
   # still restarted.
   use GenServer, restart: :transient
 
@@ -386,11 +386,26 @@ defmodule DxCore.Core.Scheduler do
   def handle_continue({:restore, rehydrate_from, state_loader, backoff_ms}, state) do
     case load_state_retrying(state_loader, state.run_id, backoff_ms) do
       {:ok, loaded} ->
-        {:noreply, state |> restore(loaded, rehydrate_from) |> schedule_deadlines()}
+        restore_loaded(state, loaded, rehydrate_from)
 
       {:error, reason} ->
         {:stop, {:shutdown, {:state_load_failed, reason}}, state}
     end
+  end
+
+  # Persisted state that cannot be applied would raise again on every restart
+  # from the same child spec, so it stops the scheduler with `{:shutdown, _}`
+  # (not restarted) instead of crash-looping.
+  defp restore_loaded(state, loaded, rehydrate_from) do
+    {:noreply, state |> restore(loaded, rehydrate_from) |> schedule_deadlines()}
+  rescue
+    error ->
+      Logger.error(
+        "Scheduler for run #{state.run_id} could not apply its persisted state: " <>
+          Exception.format(:error, error, __STACKTRACE__)
+      )
+
+      {:stop, {:shutdown, {:state_restore_failed, error.__struct__}}, state}
   end
 
   defp restore(state, %{results: loaded_results, leases: leases}, rehydrate_from) do
