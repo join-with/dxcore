@@ -697,7 +697,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   """
   def resolve_requirements(tasks) do
     Enum.map(tasks, fn
-      # A graph built off the checkout (ci.yml's size job, #15513) carries
+      # A graph built off the checkout (ci.yml's plan job, #15513) carries
       # each task's requirements; there is no package.json to read here.
       %{"requirements" => reqs} = task when is_map(reqs) and not is_map_key(task, "directory") ->
         task

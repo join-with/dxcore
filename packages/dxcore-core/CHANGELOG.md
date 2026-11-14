@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.13.1
+
+### Patch Changes
+
+- ebedc21: One run's crashing scheduler no longer ends every run's scheduler, and a scheduler whose persisted state cannot be applied now stops instead of crash-looping.
+
 ## 0.13.0
 
 ### Minor Changes

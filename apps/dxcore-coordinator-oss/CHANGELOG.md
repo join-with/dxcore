@@ -1,5 +1,12 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.8
+
+### Patch Changes
+
+- Updated dependencies [ebedc21]
+  - @repo/dxcore-core@0.13.1
+
 ## 0.6.7
 
 ### Patch Changes
