@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.2
+
+### Patch Changes
+
+- 01d7b09: Comments and README use the new CI job names (plan job, `ci-agent` matrix); no behaviour change.
+
 ## 0.11.1
 
 ### Patch Changes
