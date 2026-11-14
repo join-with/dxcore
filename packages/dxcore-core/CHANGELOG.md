@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.13.2
+
+### Patch Changes
+
+- 04aa8f1: The coordinator's test task runs about 40% faster (#16294). Tests of a scheduler that cannot answer no longer wait out the real 5 s call timeout and retry delays: `:dxcore_core` reads `:call_timeout_ms` and `:state_load_backoff_ms`, and the channels read `:confirm_retry_ms` and `:replay_retry_ms`, each defaulting to the old value. The magic-link email in the login form is sent under the task supervisor like the registration one. Dependencies compile in 4 parallel partitions.
+
 ## 0.13.1
 
 ### Patch Changes
