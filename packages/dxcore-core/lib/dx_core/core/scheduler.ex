@@ -110,6 +110,14 @@ defmodule DxCore.Core.Scheduler do
   # waits instead of timing out.
   @default_state_load_backoff_ms [100, 200, 400, 800, 1_600]
 
+  # How long a call to a scheduler waits for its answer: GenServer.call's 5 s
+  # unless `config :dxcore_core, :call_timeout_ms` says otherwise. Production
+  # never sets it; a test of a scheduler that cannot answer shortens it
+  # instead of waiting out the 5 s.
+  defp call(pid, message) do
+    GenServer.call(pid, message, Application.get_env(:dxcore_core, :call_timeout_ms, 5_000))
+  end
+
   # Registry module used for `{:via, _, _}` naming, lookup, and select. Defaults
   # to the local `Registry` (OSS coordinator). SaaS overrides via
   # `config :dxcore_core, :scheduler_via_module, Horde.Registry` so the same
@@ -196,7 +204,13 @@ defmodule DxCore.Core.Scheduler do
         end),
       lease_grace_ms: Keyword.get(opts, :lease_grace_ms, @default_lease_grace_ms),
       state_load_backoff_ms:
-        Keyword.get(opts, :state_load_backoff_ms, @default_state_load_backoff_ms)
+        Keyword.get_lazy(opts, :state_load_backoff_ms, fn ->
+          Application.get_env(
+            :dxcore_core,
+            :state_load_backoff_ms,
+            @default_state_load_backoff_ms
+          )
+        end)
     }
 
     restore =
@@ -254,7 +268,7 @@ defmodule DxCore.Core.Scheduler do
   Returns `{:ok, %TaskState{}}` or `:no_task`.
   """
   def request_task(pid, agent_id, agent_info \\ %AgentInfo{}) do
-    GenServer.call(pid, {:request_task, agent_id, agent_info})
+    call(pid, {:request_task, agent_id, agent_info})
   end
 
   @doc """
@@ -265,7 +279,7 @@ defmodule DxCore.Core.Scheduler do
   cancels it once nothing runs. Draining twice is the same as once.
   """
   @spec drain(pid()) :: {:ok, non_neg_integer()}
-  def drain(pid), do: GenServer.call(pid, :drain)
+  def drain(pid), do: call(pid, :drain)
 
   @doc """
   Report the result of a task execution.
@@ -280,7 +294,7 @@ defmodule DxCore.Core.Scheduler do
   - `{:error, :unknown_task}` if `task_id` does not exist in this scheduler.
   """
   def report_result(pid, task_id, agent_id, result) do
-    GenServer.call(pid, {:report_result, task_id, agent_id, result})
+    call(pid, {:report_result, task_id, agent_id, result})
   end
 
   @doc "The `:lease_grace_ms` a scheduler gets when none is given."
@@ -296,7 +310,7 @@ defmodule DxCore.Core.Scheduler do
   An agent that comes back says what it runs (`release_agent/3`).
   """
   def hold_agent(pid, agent_id) do
-    GenServer.call(pid, {:hold_agent, agent_id})
+    call(pid, {:hold_agent, agent_id})
   end
 
   @doc """
@@ -306,12 +320,12 @@ defmodule DxCore.Core.Scheduler do
   what it is running (the task it names is kept).
   """
   def release_agent(pid, agent_id, keep_task_id \\ nil) do
-    GenServer.call(pid, {:release_agent, agent_id, keep_task_id})
+    call(pid, {:release_agent, agent_id, keep_task_id})
   end
 
   @doc "Return the current scheduler status."
   def status(pid) do
-    GenServer.call(pid, :status)
+    call(pid, :status)
   end
 
   @doc """
@@ -320,12 +334,12 @@ defmodule DxCore.Core.Scheduler do
   re-deriving the topic from socket assigns (which may be session-scoped).
   """
   def dispatcher_topic(pid) do
-    GenServer.call(pid, :dispatcher_topic)
+    call(pid, :dispatcher_topic)
   end
 
   @doc "Return a structured summary of the run."
   def summary(pid) do
-    GenServer.call(pid, :summary)
+    call(pid, :summary)
   end
 
   @doc "Trigger topology evaluation. Called when agents connect or disconnect."
