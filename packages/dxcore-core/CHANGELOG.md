@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.14.0
+
+### Minor Changes
+
+- 6eefc14: At its deadline a run that still has work first asks the context's optional `on_deadline_reached` hook and, when it answers `{:extend, deadline_at, hard_stop_at}` with later times, goes on to them instead of draining (#16724).
+
 ## 0.13.2
 
 ### Patch Changes
