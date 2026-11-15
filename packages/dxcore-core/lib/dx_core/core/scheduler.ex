@@ -22,6 +22,14 @@ defmodule DxCore.Core.Scheduler do
   (topology evaluation failed the run). The hook runs in the scheduler
   process, so it must not call the scheduler back.
 
+  At `deadline_at` a run that still has work (a ready task or a running one)
+  first asks the context's optional `on_deadline_reached: {module, function,
+  extra_args}`, called as `apply(module, function, [run_id, context | extra_args])`
+  in the scheduler process (it must not call the scheduler back). It answers
+  `{:extend, deadline_at, hard_stop_at}`, and the run goes on to those later
+  times instead of draining (#16724), or anything else (or a raise), and the
+  run drains as usual.
+
   Each task records when it became ready (`ready_at`, its dependencies done)
   and when its current assignment started (`started_at`), in wall-clock time,
   for a coordinator that keeps a run's timeline (#16021).
@@ -377,6 +385,8 @@ defmodule DxCore.Core.Scheduler do
       # at hard_stop_at; nil for every other run.
       deadline_at: restore.deadline_at,
       hard_stop_at: restore.hard_stop_at,
+      deadline_timer: nil,
+      hard_stop_timer: nil,
       stop_requested: false,
       topology_check: Map.get(context, :topology_check, "infer"),
       expected_agents: get_in(context, [:topology, "agents"]),
@@ -411,7 +421,11 @@ defmodule DxCore.Core.Scheduler do
   # from the same child spec, so it stops the scheduler with `{:shutdown, _}`
   # (not restarted) instead of crash-looping.
   defp restore_loaded(state, loaded, rehydrate_from) do
-    {:noreply, state |> restore(loaded, rehydrate_from) |> schedule_deadlines()}
+    {:noreply,
+     state
+     |> restore(loaded, rehydrate_from)
+     |> later_deadlines(loaded)
+     |> schedule_deadlines()}
   rescue
     error ->
       Logger.error(
@@ -421,6 +435,22 @@ defmodule DxCore.Core.Scheduler do
 
       {:stop, {:shutdown, {:state_restore_failed, error.__struct__}}, state}
   end
+
+  # A run moved to a later window (#16724) keeps it when its scheduler is
+  # restarted from the options it was first started with: the persisted times
+  # count when they are later than the start options'.
+  defp later_deadlines(%{deadline_at: %DateTime{} = deadline} = state, loaded) do
+    with %DateTime{} = d <- loaded[:deadline_at],
+         %DateTime{} = h <- loaded[:hard_stop_at],
+         :gt <- DateTime.compare(d, deadline),
+         true <- DateTime.compare(h, d) != :lt do
+      %{state | deadline_at: d, hard_stop_at: h}
+    else
+      _ -> state
+    end
+  end
+
+  defp later_deadlines(state, _loaded), do: state
 
   defp restore(state, %{results: loaded_results, leases: leases}, rehydrate_from) do
     results = merge_results(loaded_results, rehydrate_from)
@@ -617,12 +647,18 @@ defmodule DxCore.Core.Scheduler do
 
   @impl true
   def handle_info(:deadline_reached, state) do
-    :telemetry.execute([:dxcore, :scheduler, :deadline], %{count: 1}, %{
-      run_id: state.run_id,
-      kind: :drain
-    })
+    case extend_deadline(state) do
+      {:ok, state} ->
+        {:noreply, state}
 
-    {:noreply, maybe_stop(%{state | draining: true}, :drained)}
+      :drain ->
+        :telemetry.execute([:dxcore, :scheduler, :deadline], %{count: 1}, %{
+          run_id: state.run_id,
+          kind: :drain
+        })
+
+        {:noreply, maybe_stop(%{state | draining: true}, :drained)}
+    end
   end
 
   @impl true
@@ -664,10 +700,86 @@ defmodule DxCore.Core.Scheduler do
 
   defp schedule_deadlines(state) do
     now = DateTime.utc_now()
-    Process.send_after(self(), :deadline_reached, ms_until(state.deadline_at, now))
-    Process.send_after(self(), :hard_stop_reached, ms_until(state.hard_stop_at, now))
-    state
+
+    %{
+      state
+      | deadline_timer:
+          Process.send_after(self(), :deadline_reached, ms_until(state.deadline_at, now)),
+        hard_stop_timer:
+          Process.send_after(self(), :hard_stop_reached, ms_until(state.hard_stop_at, now))
+    }
   end
+
+  # #16724: a run with work left asks the coordinator at its deadline whether
+  # it may go on to a later window. Only a later deadline and hard stop count.
+  defp extend_deadline(%{hard_stop_at: nil}), do: :drain
+  defp extend_deadline(%{stop_requested: true}), do: :drain
+  defp extend_deadline(%{draining: true}), do: :drain
+
+  defp extend_deadline(state) do
+    with {module, function, args} <- Map.get(state.context, :on_deadline_reached),
+         true <- has_work?(state),
+         {:extend, %DateTime{} = deadline_at, %DateTime{} = hard_stop_at} <-
+           apply(module, function, [state.run_id, state.context | args]),
+         :gt <- DateTime.compare(deadline_at, state.deadline_at),
+         true <- DateTime.compare(hard_stop_at, deadline_at) != :lt do
+      cancel_timer(state.deadline_timer)
+      cancel_timer(state.hard_stop_timer)
+
+      # A hard stop at the old time that was already delivered is stale.
+      receive do
+        :hard_stop_reached -> :ok
+      after
+        0 -> :ok
+      end
+
+      Logger.info(
+        "Run #{state.run_id} reached its deadline with work left: moved to " <>
+          "#{DateTime.to_iso8601(deadline_at)}, hard stop #{DateTime.to_iso8601(hard_stop_at)}"
+      )
+
+      :telemetry.execute([:dxcore, :scheduler, :deadline], %{count: 1}, %{
+        run_id: state.run_id,
+        kind: :extended
+      })
+
+      {:ok, schedule_deadlines(%{state | deadline_at: deadline_at, hard_stop_at: hard_stop_at})}
+    else
+      _ -> :drain
+    end
+  rescue
+    e ->
+      Logger.error(
+        "on_deadline_reached for run #{state.run_id} raised: " <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
+
+      :drain
+  catch
+    kind, value ->
+      Logger.error(
+        "on_deadline_reached for run #{state.run_id} failed: #{inspect({kind, value})}"
+      )
+
+      :drain
+  end
+
+  # Ready work, or a running task still within its limit (the context's
+  # `:task_limit_seconds`, 180 by default): a run held up by one task that is
+  # past its limit is not moved to a longer window for it.
+  defp has_work?(state) do
+    limit_ms = Map.get(state.context, :task_limit_seconds, 180) * 1000
+    now = DateTime.utc_now()
+
+    MapSet.size(state.frontier) > 0 or
+      Enum.any?(state.tasks, fn {_id, t} ->
+        t.status == :running and
+          (t.started_at == nil or DateTime.diff(now, t.started_at, :millisecond) <= limit_ms)
+      end)
+  end
+
+  defp cancel_timer(ref) when is_reference(ref), do: Process.cancel_timer(ref)
+  defp cancel_timer(_), do: :ok
 
   defp ms_until(at, now), do: max(DateTime.diff(at, now, :millisecond), 0)
 
@@ -933,8 +1045,9 @@ defmodule DxCore.Core.Scheduler do
   defp load_state({module, function, args}, run_id)
        when is_atom(module) and is_atom(function) and is_list(args) do
     case apply(module, function, [run_id | args]) do
-      {:ok, %{results: results, leases: leases}} when is_list(results) and is_list(leases) ->
-        {:ok, %{results: results, leases: leases}}
+      {:ok, %{results: results, leases: leases} = loaded}
+      when is_list(results) and is_list(leases) ->
+        {:ok, Map.take(loaded, [:results, :leases, :deadline_at, :hard_stop_at])}
 
       other ->
         {:error, {:bad_return, other}}

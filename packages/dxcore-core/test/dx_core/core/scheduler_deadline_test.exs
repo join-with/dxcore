@@ -20,6 +20,22 @@ defmodule DxCore.Core.SchedulerDeadlineTest do
     end
   end
 
+  defmodule Extender do
+    @moduledoc false
+    # Answers `on_deadline_reached`: extends once to the times in the process
+    # dictionary of the test via an Agent, then drains.
+    def reached(run_id, _context, test_pid, answer) do
+      send(test_pid, {:deadline_asked, run_id})
+      answer
+    end
+
+    def raising(_run_id, _context), do: raise("hook down")
+
+    # A state loader as the coordinator's: the run row's later times.
+    def loaded(_run_id, deadline_at, hard_stop_at),
+      do: {:ok, %{results: [], leases: [], deadline_at: deadline_at, hard_stop_at: hard_stop_at}}
+  end
+
   defmodule Forward do
     @moduledoc false
     def handle(event, _measurements, meta, test_pid),
@@ -190,5 +206,142 @@ defmodule DxCore.Core.SchedulerDeadlineTest do
 
     Scheduler.check_topology(pid)
     assert_receive {:run_stopped, ^run_id, :failed, true}, 3_000
+  end
+
+  describe "on_deadline_reached (#16724)" do
+    test "a run with work left goes on to the later times instead of draining", %{graph: graph} do
+      # The later deadline sits seconds past the old hard stop, so a slow
+      # scheduler cannot reach it before the task request below.
+      later = in_ms(3_000)
+      hard = in_ms(10_000)
+
+      {pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(50),
+          hard_stop_at: in_ms(300),
+          context: %{
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :reached, [self(), {:extend, later, hard}]}
+          }
+        )
+
+      assert_receive {:deadline_asked, ^run_id}, 1_000
+
+      # Past the old deadline and the old hard stop: still handing out tasks,
+      # and the old hard stop did not end the run.
+      Process.sleep(400)
+      assert {:ok, _task} = Scheduler.request_task(pid, "agent-1")
+      refute_received {:run_stopped, ^run_id, _, _}
+
+      # The later deadline drains (the hook is asked again, answers extend with
+      # the same time, which is not later, so the run drains).
+      assert_receive {:deadline_asked, ^run_id}, 5_000
+    end
+
+    test "a run past the later hard stop is stopped there", %{graph: graph} do
+      {pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(30),
+          hard_stop_at: in_ms(60),
+          context: %{
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :reached, [self(), {:extend, in_ms(150), in_ms(400)}]}
+          }
+        )
+
+      {:ok, _task} = Scheduler.request_task(pid, "agent-1")
+      refute_receive {:run_stopped, ^run_id, _, _}, 250
+      assert_receive {:run_stopped, ^run_id, :hard_stop, true}, 1_000
+    end
+
+    test "a hook that answers anything else drains", %{graph: graph} do
+      {_pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(50),
+          hard_stop_at: in_ms(5_000),
+          context: %{
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :reached, [self(), :drain]}
+          }
+        )
+
+      assert_receive {:deadline_asked, ^run_id}, 1_000
+      assert_receive {:run_stopped, ^run_id, :drained, true}, 1_000
+    end
+
+    @tag capture_log: true
+    test "a raising hook drains", %{graph: graph} do
+      {_pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(50),
+          hard_stop_at: in_ms(5_000),
+          context: %{
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :raising, []}
+          }
+        )
+
+      assert_receive {:run_stopped, ^run_id, :drained, true}, 1_000
+    end
+
+    test "a run past its task limit's only running task is drained, not moved", %{graph: graph} do
+      {pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(150),
+          hard_stop_at: in_ms(5_000),
+          context: %{
+            task_limit_seconds: 0,
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :reached, [self(), {:extend, in_ms(900), in_ms(990)}]}
+          }
+        )
+
+      # Take every task so the frontier is empty and one hangs past its limit.
+      take = fn take ->
+        case Scheduler.request_task(pid, "agent-1") do
+          {:ok, _} -> take.(take)
+          _ -> :ok
+        end
+      end
+
+      take.(take)
+      refute_receive {:deadline_asked, ^run_id}, 400
+    end
+
+    test "a scheduler restarted from its first times keeps the later ones its loader returns",
+         %{graph: graph} do
+      later = in_ms(900)
+      hard = in_ms(5_000)
+
+      {pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(0),
+          hard_stop_at: in_ms(50),
+          state_loader: {Extender, :loaded, [later, hard]}
+        )
+
+      Process.sleep(300)
+      refute_received {:run_stopped, ^run_id, _, _}
+      assert {:ok, _task} = Scheduler.request_task(pid, "agent-1")
+    end
+
+    test "a finished run's hook is never asked", %{graph: graph} do
+      {pid, run_id} =
+        start(graph,
+          deadline_at: in_ms(300),
+          hard_stop_at: in_ms(5_000),
+          context: %{
+            on_run_stopped: {StopSink, :stopped, [self()]},
+            on_deadline_reached: {Extender, :reached, [self(), {:extend, in_ms(900), in_ms(990)}]}
+          }
+        )
+
+      for _ <- 1..4 do
+        {:ok, t} = Scheduler.request_task(pid, "agent-1")
+        {:ok, _} = Scheduler.report_result(pid, t.task_id, "agent-1", :success)
+      end
+
+      refute_receive {:deadline_asked, ^run_id}, 500
+    end
   end
 end
