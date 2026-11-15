@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.3
+
+### Patch Changes
+
+- e27d025: The agent reports `cached: true` with a task's result when turbo printed its own cache-hit line for that task, so the coordinator can keep replays out of its duration history (#16724).
+
 ## 0.11.2
 
 ### Patch Changes
