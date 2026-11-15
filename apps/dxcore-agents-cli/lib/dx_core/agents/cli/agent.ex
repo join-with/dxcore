@@ -33,6 +33,8 @@ defmodule DxCore.Agents.CLI.Agent do
     :current_port,
     :current_task_id,
     :current_run_id,
+    # The `<package>:<task>` prefix turbo puts on that task's own output lines.
+    :current_cache_key,
     :start_time,
     :capabilities,
     :command_template,
@@ -47,10 +49,40 @@ defmodule DxCore.Agents.CLI.Agent do
     # How long a task runs on once the coordinator is lost (LostCoordinator).
     reconnect_timeout_ms: LostCoordinator.reconnect_timeout_ms(),
     task_grace_ms: LostCoordinator.task_grace_ms(),
-    kill_after_ms: LostCoordinator.kill_after_ms()
+    kill_after_ms: LostCoordinator.kill_after_ms(),
+    # Whether turbo said the running task was a cache hit (`cache_hit_line?/2`).
+    cache_hit: false
   ]
 
   # --- Public API ---
+
+  @doc """
+  Whether `line` is turbo's own cache-hit line for the task whose output
+  prefix is `cache_key` (`<package>:<task>`), as in
+  `@repo/web:test: cache hit, replaying logs 0a1b2c3d4e5f6071` (or
+  `suppressing logs`). A hit on one of the task's dependencies carries that
+  task's prefix, and a line the task itself prints is cut off at the end of
+  the hash, so neither counts.
+  """
+  @spec cache_hit_line?(String.t(), String.t() | nil) :: boolean()
+  def cache_hit_line?(_line, nil), do: false
+
+  def cache_hit_line?(line, cache_key) do
+    prefix = cache_key <> ": cache hit, "
+
+    # Most output lines are not the task's own turbo line: a prefix check
+    # settles them without a regex.
+    case line do
+      <<^prefix::binary-size(byte_size(prefix)), rest::binary>> ->
+        Regex.match?(
+          ~r/\A(replaying|suppressing) logs [0-9a-f]{16}\z/,
+          String.trim_trailing(rest)
+        )
+
+      _ ->
+        false
+    end
+  end
 
   def run([flag | _]) when flag in ["--help", "-h"] do
     DxCore.Agents.CLI.Help.print_for(__MODULE__)
@@ -185,6 +217,8 @@ defmodule DxCore.Agents.CLI.Agent do
               | current_port: port,
                 current_task_id: task_id,
                 current_run_id: run_id,
+                current_cache_key: "#{payload["package"]}:#{payload["task"]}",
+                cache_hit: false,
                 start_time: System.monotonic_time(:millisecond)
             }
 
@@ -227,6 +261,11 @@ defmodule DxCore.Agents.CLI.Agent do
 
     log(state, safe_line)
 
+    state = %{
+      state
+      | cache_hit: state.cache_hit or cache_hit_line?(safe_line, state.current_cache_key)
+    }
+
     # With the coordinator lost (no client), the line only goes to the log.
     if state.client do
       DxCore.Agents.WsClient.push(state.client, "task_log", %{
@@ -246,7 +285,10 @@ defmodule DxCore.Agents.CLI.Agent do
       "task_id" => state.current_task_id,
       "run_id" => state.current_run_id,
       "exit_code" => exit_code,
-      "duration_ms" => duration_ms
+      "duration_ms" => duration_ms,
+      # A turbo cache replay takes seconds whatever the task costs, so the
+      # coordinator keeps it out of the task's duration history (#16724).
+      "cached" => state.cache_hit
     }
 
     new_state = %{
@@ -254,6 +296,8 @@ defmodule DxCore.Agents.CLI.Agent do
       | current_port: nil,
         current_task_id: nil,
         current_run_id: nil,
+        current_cache_key: nil,
+        cache_hit: false,
         start_time: nil
     }
 

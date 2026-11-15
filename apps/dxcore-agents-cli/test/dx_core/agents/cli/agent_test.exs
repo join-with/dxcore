@@ -824,6 +824,76 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert is_integer(payload["duration_ms"])
     end
 
+    test "a turbo cache hit line of the task itself marks its result cached" do
+      port = open_test_port()
+
+      state =
+        base_state(%{
+          current_port: port,
+          current_task_id: "web#test",
+          current_run_id: "r1",
+          current_cache_key: "@repo/web:test",
+          start_time: System.monotonic_time(:millisecond)
+        })
+
+      line = "@repo/web:test: cache hit, replaying logs 0a1b2c3d4e5f6071"
+
+      assert {:noreply, state, :infinity} =
+               Agent.handle_info({port, {:data, {:eol, line}}}, state)
+
+      assert {:noreply, _} = Agent.handle_info({port, {:exit_status, 0}}, state)
+
+      assert_receive {:"$gen_cast", {:push, "task_result", %{"cached" => true}}}
+    end
+
+    test "a cache hit of another task, or a cache miss, leaves the result uncached" do
+      port = open_test_port()
+
+      state =
+        base_state(%{
+          current_port: port,
+          current_task_id: "web#test",
+          current_run_id: "r1",
+          current_cache_key: "@repo/web:test",
+          start_time: System.monotonic_time(:millisecond)
+        })
+
+      lines = [
+        "@repo/web:build: cache hit, replaying logs 0a1b2c3d4e5f6071",
+        "@repo/web:test: cache miss, executing 0a1b2c3d4e5f6071",
+        "@repo/web:test: cache hit, replaying logs is what this test prints"
+      ]
+
+      state =
+        Enum.reduce(lines, state, fn line, acc ->
+          {:noreply, acc, :infinity} = Agent.handle_info({port, {:data, {:eol, line}}}, acc)
+          acc
+        end)
+
+      assert {:noreply, _} = Agent.handle_info({port, {:exit_status, 0}}, state)
+      assert_receive {:"$gen_cast", {:push, "task_result", payload}}
+      assert payload["cached"] == false
+    end
+
+    test "assign_task keeps the package:task a cache hit line is prefixed with" do
+      state = base_state()
+
+      msg =
+        {:channel_message, "agent:s1", "assign_task",
+         %{
+           "task_id" => "t1",
+           "run_id" => "r1",
+           "package" => "@repo/web",
+           "task" => "e2e:part-2",
+           "command" => "echo hello"
+         }}
+
+      assert {:noreply, new_state, :infinity} = Agent.handle_info(msg, state)
+      on_exit(fn -> catch_error(Port.close(new_state.current_port)) end)
+      assert new_state.current_cache_key == "@repo/web:e2e:part-2"
+      assert new_state.cache_hit == false
+    end
+
     test "port exit_status with non-zero code reports correct exit_code" do
       port = open_test_port()
 
