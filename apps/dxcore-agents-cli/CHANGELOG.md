@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.4
+
+### Patch Changes
+
+- bc9e08c: The release hash covers the repo-cli pin, so a repo-cli release rebuilds this app with the repo-cli that builds it.
+
 ## 0.11.3
 
 ### Patch Changes

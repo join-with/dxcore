@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.11
+
+### Patch Changes
+
+- bc9e08c: The release hash covers the repo-cli pin, so a repo-cli release rebuilds this app with the repo-cli that builds it.
+
 ## 0.6.10
 
 ### Patch Changes
