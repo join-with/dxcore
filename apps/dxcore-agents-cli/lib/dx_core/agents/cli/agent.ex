@@ -317,12 +317,27 @@ defmodule DxCore.Agents.CLI.Agent do
 
       duration_ms = System.monotonic_time(:millisecond) - state.start_time
 
-      DxCore.Agents.WsClient.push(state.client, "task_result", %{
-        "task_id" => state.current_task_id,
-        "run_id" => state.current_run_id,
-        "exit_code" => -1,
-        "duration_ms" => duration_ms
-      })
+      # The task was stopped, not failed (#15868): `stopped` tells the
+      # coordinator to count it as left. `exit_code` -1 stays for a
+      # coordinator that does not read `stopped`. Sent before the agent
+      # stops: a cast could still be queued when the VM halts.
+      try do
+        DxCore.Agents.WsClient.push_sync(
+          state.client,
+          "task_result",
+          %{
+            "task_id" => state.current_task_id,
+            "run_id" => state.current_run_id,
+            "exit_code" => -1,
+            "stopped" => true,
+            "duration_ms" => duration_ms
+          },
+          5_000
+        )
+      catch
+        :exit, reason ->
+          log(state, "Could not report the stopped task (#{inspect(reason)}).")
+      end
     end
 
     {:stop, :normal, state}

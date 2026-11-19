@@ -913,11 +913,13 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert payload["run_id"] == "r1"
     end
 
-    test "shutdown with active port closes port and reports interrupted" do
+    # A task killed because the agent was told to stop did not fail (#15868).
+    test "shutdown with active port closes port and reports the task stopped, not failed" do
       port = open_test_port()
 
       state =
         base_state(%{
+          client: DxCore.Agents.Test.MockWsClient.spawn_link(),
           current_port: port,
           current_task_id: "t1",
           current_run_id: "r1",
@@ -927,9 +929,12 @@ defmodule DxCore.Agents.CLI.AgentTest do
       msg = {:channel_message, "agent:s1", "shutdown", %{"reason" => "run complete"}}
       assert {:stop, :normal, _state} = Agent.handle_info(msg, state)
 
-      assert_receive {:"$gen_cast", {:push, "task_result", payload}}
+      # On the wire before the agent stops: a synchronous push.
+      assert_received {:ws_call, {:push_sync, "task_result", payload}}
       assert payload["task_id"] == "t1"
       assert payload["run_id"] == "r1"
+      assert payload["stopped"] == true
+      # For a coordinator that does not read `stopped`.
       assert payload["exit_code"] == -1
       assert is_integer(payload["duration_ms"])
     end
