@@ -1,5 +1,12 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.5
+
+### Patch Changes
+
+- 718fb51: The agent tests' sleeping task port prints a ready line and the tests wait for it before signalling the task, so the SIGTERM test no longer races the port's start (#16315).
+- fc72535: A task the agent kills because it was told to stop (its session ended, the run's hard stop) is reported as stopped, not failed: the coordinator puts it back in the run, so the verdict counts it as left (`unfinished`) instead of naming it as a failed task (#15868).
+
 ## 0.11.4
 
 ### Patch Changes
