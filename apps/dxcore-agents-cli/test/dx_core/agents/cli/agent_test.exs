@@ -721,8 +721,17 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert result =~ "Packed: 548"
     end
 
+    # A port whose shell is running before the test signals it (#16315):
+    # Port.open can return while the child is still `erl_child_setup`, which
+    # ignores SIGTERM, and a SIGTERM that lands before the child resets its
+    # signals and execs is discarded. The shell's ready line comes after that.
     defp open_test_port do
-      port = Port.open({:spawn, "sleep 60"}, [:binary, :exit_status])
+      port =
+        Port.open({:spawn_executable, "/bin/sh"}, [
+          :binary,
+          :exit_status,
+          args: ["-c", "echo ready; exec sleep 60"]
+        ])
 
       on_exit(fn ->
         try do
@@ -732,6 +741,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
         end
       end)
 
+      assert_receive {^port, {:data, "ready\n"}}, 5_000
       port
     end
 
