@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.6
+
+### Patch Changes
+
+- 5b65241: Every package with a `mix.exs` and no JavaScript, TypeScript or CSS file now extends one shared Turbo config, `@repo/turbo-config-elixir-only`, instead of carrying its own `compile-js` and `check-types` copies (#17847): the 42 hand-copied overrides go, and the other Elixir-only packages get the same package.json-only tasks, so an edit to their Elixir no longer reaches a JS task through `^compile-js` or `^check-types`. Glide's hint fixture moves into its own package, `@repo/brainstretch-glide-fixtures`, which Glide's tests and browser tests list. The generator writes the shared `extends` for a new game's game and tests packages.
+
 ## 0.11.5
 
 ### Patch Changes
