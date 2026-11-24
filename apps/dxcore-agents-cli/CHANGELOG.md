@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.9
+
+### Patch Changes
+
+- a8a15a6: Finch moves from 0.21 to 0.24 and Req from 0.5.17 to 0.7.5. With Mint 1.11, an older Finch put a connection back in its pool after a receive timeout with the old request still in flight, so the next request to that host could read the old answer and crash with a `CaseClauseError`. Req 0.7 turns Finch 0.22+'s own transport errors back into `Req.TransportError`, so Req's retry of timeouts and refused connections keeps working (#18821).
+
 ## 0.11.8
 
 ### Patch Changes
