@@ -1,5 +1,11 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.13
+
+### Patch Changes
+
+- 120ae2c: Document that the OSS coordinator counts a task the agent stopped as failed (no behaviour change).
+
 ## 0.6.12
 
 ### Patch Changes
