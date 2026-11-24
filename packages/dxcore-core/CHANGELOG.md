@@ -1,5 +1,15 @@
 # @repo/dxcore-core
 
+## 0.14.2
+
+### Patch Changes
+
+- b2d4a31: Publish the agent protocol as `contract/agent-protocol.json`: the task fields
+  `TaskGraph` reads (`taskFields`) and the scheduler's default hold on a dropped
+  agent's task (`defaultLeaseGraceMs`). A new test keeps the file equal to the
+  code, so agents can check themselves against the file instead of this
+  package's source (#18698).
+
 ## 0.14.1
 
 ### Patch Changes

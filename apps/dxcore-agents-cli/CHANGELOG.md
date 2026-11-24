@@ -1,5 +1,15 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.8
+
+### Patch Changes
+
+- b2d4a31: The wire-fields and lease-hold tests read dxcore-core's published
+  `contract/agent-protocol.json` through a test-only Mix path dependency (which
+  never compiles dxcore-core's code) and a `@repo/dxcore-core` devDependency,
+  instead of regex-parsing dxcore-core's `task_graph.ex` and `scheduler.ex`. The
+  two `$TURBO_ROOT$/packages/dxcore-core/lib/...` test inputs are gone (#18698).
+
 ## 0.11.7
 
 ### Patch Changes
