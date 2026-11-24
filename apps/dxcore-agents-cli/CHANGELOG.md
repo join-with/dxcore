@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.7
+
+### Patch Changes
+
+- 5bbc65b: A task the agent stops itself after losing the coordinator (SIGTERM, then SIGKILL) is reported with `stopped: true`, so the coordinator counts it as left instead of failed (#17605).
+
 ## 0.11.6
 
 ### Patch Changes

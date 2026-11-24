@@ -63,6 +63,12 @@ defmodule DxCore.Agents.Web.AgentChannel do
   end
 
   @impl true
+  # The agent may send "stopped" => true when it stopped the task itself
+  # (shutdown, or a lost coordinator: SIGTERM, then SIGKILL). This coordinator
+  # ignores that flag on purpose: any non-zero exit code, -1 and 143 included,
+  # counts as a failure, so a stopped task can fail a :fail_fast run. The hosted
+  # coordinator releases such a task to run again instead. See README.md and
+  # https://github.com/join-with/joinwith/issues/18562.
   def handle_in("task_result", payload, socket) do
     %{"task_id" => task_id, "exit_code" => exit_code} = payload
     result = if exit_code == 0, do: {:success, exit_code}, else: {:failed, exit_code}

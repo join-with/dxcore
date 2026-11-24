@@ -494,7 +494,9 @@ defmodule DxCore.Agents.CLI.AgentTest do
         })
 
       capture_io(fn ->
-        assert {:noreply, ^lost, :infinity} = Agent.handle_info({:lost_task_stop, "t1"}, lost)
+        # The task is marked as being stopped, so its result says so (#17605).
+        assert {:noreply, stopping, :infinity} = Agent.handle_info({:lost_task_stop, "t1"}, lost)
+        assert stopping == %{lost | stopping_task: "t1"}
       end)
 
       # SIGTERM: the task ends with 128 + 15, and its exit is still read.
@@ -502,7 +504,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert_receive {:lost_task_kill, "t1"}, 200
     end
 
-    test "a lost task still running at its kill gets SIGKILL, and its result is reported as -1" do
+    test "a lost task still running at its kill gets SIGKILL, and its result is reported as -1, stopped" do
       # It ignores SIGTERM, and runs a child of its own.
       port =
         Port.open({:spawn_executable, "/bin/sh"}, [
@@ -544,12 +546,40 @@ defmodule DxCore.Agents.CLI.AgentTest do
         assert_receive :connecting
         assert Port.info(port) == nil
         assert reporting.current_port == nil
-        assert %{"task_id" => "t1", "run_id" => "r1", "exit_code" => -1} = reporting.lost_result
+        # The agent stopped it, the task did not fail (#17605).
+        assert %{"task_id" => "t1", "run_id" => "r1", "exit_code" => -1, "stopped" => true} =
+                 reporting.lost_result
+
+        assert reporting.stopping_task == nil
       end)
 
       # The task and its child are both gone.
       {_, 0} = System.cmd("sh", ["-c", "sleep 0.2; ! kill -0 #{os_pid} 2>/dev/null"])
       {_, 0} = System.cmd("sh", ["-c", "! kill -0 #{child_pid} 2>/dev/null"])
+    end
+
+    test "a task that exits while no stop is under way is not reported as stopped" do
+      # A mark left from another task ("t0") must not mark this one: only
+      # the task being stopped is reported as stopped.
+      port = open_test_port()
+
+      state =
+        base_state(%{
+          current_port: port,
+          current_task_id: "t1",
+          current_run_id: "r1",
+          start_time: System.monotonic_time(:millisecond),
+          stopping_task: "t0"
+        })
+
+      capture_io(fn ->
+        assert {:noreply, done} = Agent.handle_info({port, {:exit_status, 143}}, state)
+        assert done.stopping_task == nil
+      end)
+
+      assert_receive {:"$gen_cast", {:push, "task_result", result}}
+      assert %{"task_id" => "t1", "exit_code" => 143} = result
+      refute Map.has_key?(result, "stopped")
     end
 
     test "a stop or kill that comes due after its task ended changes nothing" do
@@ -608,8 +638,10 @@ defmodule DxCore.Agents.CLI.AgentTest do
 
         send(agent, {:joined, "agent:org:s1"})
 
+        # Its SIGTERM ended it (143): stopped by the agent, not failed (#17605).
         assert_receive {:ws_call,
-                        {:push_sync, "task_result", %{"task_id" => "t1", "exit_code" => 143}}},
+                        {:push_sync, "task_result",
+                         %{"task_id" => "t1", "exit_code" => 143, "stopped" => true}}},
                        2_000
 
         assert_receive {:DOWN, ^watch, :process, ^agent, :normal}, 2_000

@@ -46,6 +46,9 @@ defmodule DxCore.Agents.CLI.Agent do
     :lost_result,
     # When the connection dropped (monotonic ms), nil while connected.
     :lost_at,
+    # The task the agent is stopping itself (SIGTERM sent after the
+    # coordinator was lost, #17605): its result is reported as stopped.
+    :stopping_task,
     # How long a task runs on once the coordinator is lost (LostCoordinator).
     reconnect_timeout_ms: LostCoordinator.reconnect_timeout_ms(),
     task_grace_ms: LostCoordinator.task_grace_ms(),
@@ -291,6 +294,8 @@ defmodule DxCore.Agents.CLI.Agent do
       "cached" => state.cache_hit
     }
 
+    result = stopped_by_agent(result, state)
+
     new_state = %{
       state
       | current_port: nil,
@@ -298,7 +303,8 @@ defmodule DxCore.Agents.CLI.Agent do
         current_run_id: nil,
         current_cache_key: nil,
         cache_hit: false,
-        start_time: nil
+        start_time: nil,
+        stopping_task: nil
     }
 
     if state.client do
@@ -479,7 +485,7 @@ defmodule DxCore.Agents.CLI.Agent do
 
     signal_port(port, "TERM")
     Process.send_after(self(), {:lost_task_kill, task_id}, state.kill_after_ms)
-    {:noreply, state, :infinity}
+    {:noreply, %{state | stopping_task: task_id}, :infinity}
   end
 
   def handle_info(
@@ -490,15 +496,25 @@ defmodule DxCore.Agents.CLI.Agent do
     log(state, "Task #{task_id} is still running after SIGTERM. Sending it SIGKILL.")
     kill_port(port)
 
+    # The agent stopped the task; it did not fail (#17605). `exit_code` -1
+    # stays for a coordinator that does not read `stopped`.
     result = %{
       "task_id" => task_id,
       "run_id" => state.current_run_id,
       "exit_code" => -1,
+      "stopped" => true,
       "duration_ms" => System.monotonic_time(:millisecond) - state.start_time
     }
 
     reconnect_to_report(
-      %{state | current_port: nil, current_task_id: nil, current_run_id: nil, start_time: nil},
+      %{
+        state
+        | current_port: nil,
+          current_task_id: nil,
+          current_run_id: nil,
+          start_time: nil,
+          stopping_task: nil
+      },
       result
     )
   end
@@ -652,6 +668,17 @@ defmodule DxCore.Agents.CLI.Agent do
       do: collect_descendants(rest, children, acc),
       else: collect_descendants(Map.get(children, pid, []) ++ rest, children, [pid | acc])
   end
+
+  # A task that ends while the agent is stopping it (its SIGTERM after the
+  # coordinator was lost) was stopped, whatever its exit code says (#17605):
+  # the coordinator counts a `stopped` result as left, not failed. Exit 0
+  # included: many programs exit 0 on SIGTERM without having finished, so
+  # the task runs again rather than counting as done.
+  defp stopped_by_agent(result, %{stopping_task: task_id, current_task_id: task_id})
+       when task_id != nil,
+       do: Map.put(result, "stopped", true)
+
+  defp stopped_by_agent(result, _state), do: result
 
   defp open_task_port(work_dir, command, shard) do
     [exe | args] = String.split(command)
