@@ -28,7 +28,12 @@ defmodule DxCore.Agents.CLI.MixProject do
     [
       {:jason, "~> 1.2"},
       {:slipstream, "~> 1.0"},
-      {:req, "~> 0.5"},
+      # Req 0.7 turns Finch 0.22+ errors (Finch.TransportError) into
+      # Req.TransportError, which Req's retry expects (#18821).
+      {:req, "~> 0.7"},
+      # Finch 0.24 closes an HTTP/1 connection after a receive timeout instead
+      # of pooling it with the old request in flight (Mint 1.11, #18821).
+      {:finch, "~> 0.24"},
       {:burrito, "~> 1.0"},
       # Only for the published agent protocol (contract/agent-protocol.json)
       # the tests check against: dxcore-core's own code is never compiled or
