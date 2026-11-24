@@ -676,10 +676,11 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
-  # `parse_task/1`, kept equal by dispatcher_test.exs). A build system's task
-  # carries much more: a turbo dry-run task holds every input file's hash, its
-  # env vars and its resolved definition, about 11 KB a task, which on an
-  # 800-task graph OOM-killed the coordinator.
+  # `parse_task/1`, published as `taskFields` in dxcore-core's
+  # contract/agent-protocol.json, which dispatcher_test.exs checks this
+  # against). A build system's task carries much more: a turbo dry-run task
+  # holds every input file's hash, its env vars and its resolved definition,
+  # about 11 KB a task, which on an 800-task graph OOM-killed the coordinator.
   @wire_fields ~w(taskId task package hash command dependencies dependents cache cacheable shard requirements)
 
   @doc "Keeps only the fields of a task the coordinator reads."

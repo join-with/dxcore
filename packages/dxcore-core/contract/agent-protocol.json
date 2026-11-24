@@ -1,0 +1,16 @@
+{
+  "defaultLeaseGraceMs": 210000,
+  "taskFields": [
+    "taskId",
+    "task",
+    "package",
+    "hash",
+    "command",
+    "dependencies",
+    "dependents",
+    "cache",
+    "cacheable",
+    "shard",
+    "requirements"
+  ]
+}

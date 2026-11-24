@@ -17,7 +17,8 @@ defmodule DxCore.Agents.CLI.LostCoordinator do
   a dropped agent's task (`DxCore.Core.Scheduler`'s `@default_lease_grace_ms`,
   in another package) must be at least `lease_needed_ms/0`: shorter, and a
   second agent can start the task while this one still runs it. A test reads
-  the scheduler's source and fails when the two drift apart.
+  that hold from dxcore-core's published `contract/agent-protocol.json` and
+  fails when the two drift apart.
   """
 
   @reconnect_timeout_ms 30_000

@@ -29,7 +29,11 @@ defmodule DxCore.Agents.CLI.MixProject do
       {:jason, "~> 1.2"},
       {:slipstream, "~> 1.0"},
       {:req, "~> 0.5"},
-      {:burrito, "~> 1.0"}
+      {:burrito, "~> 1.0"},
+      # Only for the published agent protocol (contract/agent-protocol.json)
+      # the tests check against: dxcore-core's own code is never compiled or
+      # loaded, though Mix still resolves its hex deps in the test env.
+      {:dxcore_core, path: "../../packages/dxcore-core", only: :test, compile: false, app: false}
     ]
   end
 

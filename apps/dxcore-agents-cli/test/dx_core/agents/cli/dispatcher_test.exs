@@ -4,6 +4,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
   import ExUnit.CaptureIO
 
   alias DxCore.Agents.CLI.Dispatcher
+  alias DxCore.Agents.CLI.Test.AgentProtocol
 
   describe "parse_args/1" do
     test "extracts required flags" do
@@ -804,22 +805,11 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
 
   describe "wire_fields/0" do
     # The coordinator lives in another package, so the field list can't be
-    # shared code; this reads its parser and fails when the two drift apart.
+    # shared code; dxcore-core publishes it in its agent protocol contract,
+    # and this fails when the two drift apart.
     test "are exactly the task fields the coordinator's TaskGraph reads" do
-      path =
-        Path.expand(
-          "../../../../../../packages/dxcore-core/lib/dx_core/core/task_graph.ex",
-          __DIR__
-        )
+      read_by_coordinator = AgentProtocol.read()["taskFields"]
 
-      source = File.read!(path)
-
-      read_by_coordinator =
-        Regex.scan(~r/raw\["([A-Za-z]+)"\]|defp parse_[a-z_]+\(%\{"([A-Za-z]+)"/, source)
-        |> Enum.map(fn [_ | groups] -> Enum.find(groups, &(&1 != "")) end)
-        |> Enum.uniq()
-
-      assert length(read_by_coordinator) == 11
       assert Enum.sort(Dispatcher.wire_fields()) == Enum.sort(read_by_coordinator)
     end
   end
