@@ -43,8 +43,9 @@ defmodule DxCore.Agents.BuildSystem.Turbo do
   defp nonexistent_task?(_), do: false
 
   # A dropped <NONEXISTENT> task is a no-op (no package script), so it is not
-  # dispatched (#4154). Its edges still order the graph: `test` reaches its own
-  # package's `build` only through `test:binary`, which has no script. So each
+  # dispatched (#4154). Its edges still order the graph: a `test` that lists
+  # `test:binary` reaches its own package's `build` only through it, and in a
+  # package with no `test:binary` script that task is dropped. So each
   # dropped id in a survivor's `dependencies` becomes that task's own
   # dependencies, and in `dependents` its dependents, through chains of
   # dropped tasks. Pruning the id alone let every test part start at once and
