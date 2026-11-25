@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.10
+
+### Patch Changes
+
+- 45a5bed: A package's `test` no longer waits for its own `build` (#18964): the root `test` task dropped its `test:binary` dependency. review-engine's `test` lists `test:binary` (its Burrito binary smoke test, which waits for `build`) in its own turbo.json, so that check still runs with its tests. simplecompi-ui's and the Brainstretch shell tests' test parts match the root task's new dependencies; the coordinator's turbo.json description and the dxcore CLI's graph-contraction comment say how the edge now works. agentbase-hub's and studypath-hub's `test` keep waiting for their `build`: their `mix gettext.extract` compiles into \_build/dev, which the hub build caches. The lingo-place and typing-place e2e wiring tasks' descriptions no longer name the root `test:binary` edge.
+
 ## 0.11.9
 
 ### Patch Changes
