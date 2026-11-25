@@ -1,5 +1,11 @@
 # @repo/dxcore-core
 
+## 0.14.3
+
+### Patch Changes
+
+- 886409c: Lint runs as four tasks (format, code, types, deps); `lint` itself is a group with no script.
+
 ## 0.14.2
 
 ### Patch Changes

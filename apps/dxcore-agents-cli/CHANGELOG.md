@@ -1,5 +1,11 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.11
+
+### Patch Changes
+
+- 886409c: Lint runs as four tasks (format, code, types, deps); `lint` itself is a group with no script.
+
 ## 0.11.10
 
 ### Patch Changes
