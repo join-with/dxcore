@@ -1,5 +1,20 @@
 # @repo/dxcore-coordinator-oss
 
+## 0.6.16
+
+### Patch Changes
+
+- c963776: A CI agent can leave its run as soon as the run has no more work for it
+  (#18809). `DxCore.Core.Scheduler.LeaveRule` decides, as a pure function the
+  scheduler calls inside `request_task/4` (`may_leave: true`); a released agent
+  gets `"shutdown"` `no_more_work`. The SaaS coordinator turns it on per
+  organization (`organization_settings.early_leave`, off by default). The agent
+  protocol contract lists every shutdown reason, and every coordinator builds
+  its shutdown payload from `DxCore.Core.AgentProtocol`. The agents CLI only
+  gains a test that it stops normally on each listed reason.
+- Updated dependencies [c963776]
+  - @repo/dxcore-core@0.15.0
+
 ## 0.6.15
 
 ### Patch Changes
