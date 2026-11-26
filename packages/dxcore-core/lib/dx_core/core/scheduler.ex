@@ -45,6 +45,7 @@ defmodule DxCore.Core.Scheduler do
   require Logger
 
   alias DxCore.Core.AgentInfo
+  alias DxCore.Core.Scheduler.LeaveRule
   alias DxCore.Core.TaskGraph
 
   # ── Task state tracked per task ──────────────────────────────────────
@@ -275,9 +276,18 @@ defmodule DxCore.Core.Scheduler do
   (defaults to `%AgentInfo{}`).
 
   Returns `{:ok, %TaskState{}}` or `:no_task`.
+
+  With `may_leave: true` in `opts`, and the scheduler's context set to
+  `early_leave: true`, an agent that gets no task is asked about through
+  `DxCore.Core.Scheduler.LeaveRule`: when the rule says it may leave, the
+  reply is `{:leave, :no_more_work}` instead of `:no_task`, and every later
+  request from that agent gets the same answer. Only a caller that serves the
+  agent for this one run passes the option (an agent of a session with
+  several runs may still have work in another). The context's
+  `:leave_spare` (default 1) is the rule's `spare`.
   """
-  def request_task(pid, agent_id, agent_info \\ %AgentInfo{}) do
-    call(pid, {:request_task, agent_id, agent_info})
+  def request_task(pid, agent_id, agent_info \\ %AgentInfo{}, opts \\ []) do
+    call(pid, {:request_task, agent_id, agent_info, opts})
   end
 
   @doc """
@@ -397,7 +407,11 @@ defmodule DxCore.Core.Scheduler do
       # connected, released after the deadline if the agent is still absent.
       held_leases: %{},
       lease_timer: nil,
-      lease_grace_ms: restore.lease_grace_ms
+      lease_grace_ms: restore.lease_grace_ms,
+      # Agents `LeaveRule` released (`request_task/4` with `may_leave: true`).
+      # In memory only: a restarted scheduler forgets them, and they are
+      # already gone or marked leaving in the coordinator's presence list.
+      leaving: MapSet.new()
     }
 
     # The persisted state is loaded in handle_continue, which runs before any
@@ -481,46 +495,25 @@ defmodule DxCore.Core.Scheduler do
   end
 
   @impl true
-  def handle_call({:request_task, _agent_id, _agent_info}, _from, %{draining: true} = state),
-    do: {:reply, :no_task, state}
+  def handle_call(
+        {:request_task, _agent_id, _agent_info, _opts},
+        _from,
+        %{draining: true} = state
+      ),
+      do: {:reply, :no_task, state}
 
   def handle_call(:drain, _from, state) do
     running = Enum.count(state.tasks, fn {_id, %TaskState{status: s}} -> s == :running end)
     {:reply, {:ok, running}, %{state | draining: true}}
   end
 
-  def handle_call({:request_task, agent_id, agent_info}, _from, state) do
-    # Build list of frontier TaskState structs for the plugin
-    frontier_tasks =
-      state.frontier
-      |> MapSet.to_list()
-      |> Enum.map(fn task_id -> state.tasks[task_id] end)
+  def handle_call({:request_task, agent_id, agent_info, opts}, _from, state) do
+    may_leave? = Keyword.get(opts, :may_leave, false) and early_leave?(state)
 
-    case state.plugin.select_task(frontier_tasks, agent_info, state.context) do
-      nil ->
-        {:reply, :no_task, state}
-
-      selected_task ->
-        task_id = selected_task.task_id
-
-        updated_task = %{
-          selected_task
-          | status: :running,
-            assigned_to: agent_id,
-            agent_info: agent_info,
-            started_at_mono: System.monotonic_time(:millisecond),
-            started_at: DateTime.utc_now()
-        }
-
-        new_state = %{
-          state
-          | tasks: Map.put(state.tasks, task_id, updated_task),
-            agents: Map.put(state.agents, agent_id, task_id),
-            frontier: MapSet.delete(state.frontier, task_id)
-        }
-
-        notify_plugin_task_assigned(state, updated_task, agent_info)
-        {:reply, {:ok, updated_task}, new_state}
+    if may_leave? and MapSet.member?(state.leaving, agent_id) do
+      {:reply, {:leave, :no_more_work}, state}
+    else
+      assign_task(agent_id, agent_info, may_leave?, state)
     end
   end
 
@@ -684,6 +677,95 @@ defmodule DxCore.Core.Scheduler do
   end
 
   # ── Private helpers ─────────────────────────────────────────────────
+
+  # Whether this run's agents may be released at all: the coordinator's
+  # switch, fixed in the context when the scheduler started.
+  defp early_leave?(state), do: Map.get(state.context, :early_leave) == true
+
+  defp assign_task(agent_id, agent_info, may_leave?, state) do
+    # Build list of frontier TaskState structs for the plugin
+    frontier_tasks =
+      state.frontier
+      |> MapSet.to_list()
+      |> Enum.map(fn task_id -> state.tasks[task_id] end)
+
+    case state.plugin.select_task(frontier_tasks, agent_info, state.context) do
+      nil when may_leave? ->
+        maybe_release(agent_id, agent_info, state)
+
+      nil ->
+        {:reply, :no_task, state}
+
+      selected_task ->
+        task_id = selected_task.task_id
+
+        updated_task = %{
+          selected_task
+          | status: :running,
+            assigned_to: agent_id,
+            agent_info: agent_info,
+            started_at_mono: System.monotonic_time(:millisecond),
+            started_at: DateTime.utc_now()
+        }
+
+        new_state = %{
+          state
+          | tasks: Map.put(state.tasks, task_id, updated_task),
+            agents: Map.put(state.agents, agent_id, task_id),
+            frontier: MapSet.delete(state.frontier, task_id)
+        }
+
+        notify_plugin_task_assigned(state, updated_task, agent_info)
+        {:reply, {:ok, updated_task}, new_state}
+    end
+  end
+
+  # The agent got no task: `LeaveRule` decides whether it may leave the run.
+  # It runs inside this call, so two agents asking at once are decided one
+  # after the other, the second seeing the first as gone.
+  defp maybe_release(agent_id, agent_info, state) do
+    case LeaveRule.decide(leave_snapshot(state, agent_id, agent_info), agent_id) do
+      :leave ->
+        :telemetry.execute([:dxcore, :scheduler, :agent_released], %{count: 1}, %{
+          run_id: state.run_id,
+          agent_id: agent_id,
+          reason: :no_more_work
+        })
+
+        {:reply, {:leave, :no_more_work}, %{state | leaving: MapSet.put(state.leaving, agent_id)}}
+
+      {:stay, _reason} ->
+        {:reply, :no_task, state}
+    end
+  end
+
+  # The agents are the session's present ones (the context's
+  # `:agent_lister`) minus those already released, with the asking agent's
+  # own entry from its request: its tags are what the rule checks, and the
+  # lister may not show it yet.
+  defp leave_snapshot(state, agent_id, %AgentInfo{} = agent_info) do
+    agents =
+      state
+      |> DxCore.Core.Scheduler.TopologyEvaluator.list_agents()
+      |> Enum.reject(&(&1.agent_id == agent_id or MapSet.member?(state.leaving, &1.agent_id)))
+
+    %{
+      run_status: compute_run_status(state.tasks, state.failed_fast),
+      draining: state.draining,
+      tasks:
+        Enum.map(state.tasks, fn {task_id, %TaskState{} = t} ->
+          %{
+            task_id: task_id,
+            status: t.status,
+            requirements: t.requirements,
+            assigned_to: t.assigned_to,
+            ready?: MapSet.member?(state.frontier, task_id)
+          }
+        end),
+      agents: [%{agent_info | agent_id: agent_id} | agents],
+      spare: Map.get(state.context, :leave_spare, 1)
+    }
+  end
 
   defp deadlines!(nil, nil), do: %{deadline_at: nil, hard_stop_at: nil}
 

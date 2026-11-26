@@ -1,9 +1,10 @@
 defmodule DxCore.Core.AgentProtocolContractTest do
   # contract/agent-protocol.json publishes the facts an agent must meet:
-  # the task fields TaskGraph reads and how long the scheduler holds a
-  # dropped agent's task. Agents (apps/dxcore-agents-cli) read that file
-  # through their workspace dependency on this package, never this code, so
-  # these tests keep the file equal to what the code does.
+  # the task fields TaskGraph reads, how long the scheduler holds a dropped
+  # agent's task, and the reasons a "shutdown" push may carry. Agents
+  # (apps/dxcore-agents-cli) read that file through their workspace
+  # dependency on this package, never this code, so these tests keep the
+  # file equal to what the code does.
   use ExUnit.Case, async: true
 
   alias DxCore.Core.Scheduler
@@ -15,6 +16,15 @@ defmodule DxCore.Core.AgentProtocolContractTest do
 
   test "defaultLeaseGraceMs is the scheduler's default hold on a dropped agent's task" do
     assert contract()["defaultLeaseGraceMs"] == Scheduler.default_lease_grace_ms()
+  end
+
+  test "shutdownReasons are exactly the reasons the coordinator sends" do
+    assert Enum.sort(contract()["shutdownReasons"]) ==
+             Enum.sort(DxCore.Core.AgentProtocol.shutdown_reasons())
+
+    # Independent of the module: the reasons coordinators push today.
+    assert Enum.sort(contract()["shutdownReasons"]) ==
+             ["coordinator_shutdown", "fair_share", "no_more_work", "session_finished"]
   end
 
   test "taskFields are exactly the task fields TaskGraph reads" do

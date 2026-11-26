@@ -23,6 +23,11 @@ defmodule DxCore.Core.ChannelHelpers do
   newly-registered Scheduler is not yet visible in a remote pod's local
   CRDT view by the time the `tasks_available` broadcast arrives there.
 
+  An agent that gets `{:leave, _}` from its run's scheduler (see
+  `DxCore.Core.Scheduler.request_task/4`'s `may_leave`) is pushed
+  `"shutdown"` with reason `"no_more_work"` and the socket is assigned
+  `:left_early`; the channel then asks for no further task.
+
   `log_run_id/2` names the run a `task_log` line belongs to, from the
   assignment `try_assign_task` recorded on the socket.
 
@@ -78,15 +83,27 @@ defmodule DxCore.Core.ChannelHelpers do
             _ -> DxCore.Core.Scheduler.list_for_session(org_id, session_id)
           end
 
+        opts = [may_leave: may_leave?(org_id, session_id, scheduler_hint, scheduler_pids)]
+
         result =
           Enum.find_value(scheduler_pids, fn {pid, run_id} ->
-            case safe_request_task(pid, agent_id, agent_info) do
+            case safe_request_task(pid, agent_id, agent_info, opts) do
               {:ok, task} -> {pid, run_id, task}
+              {:leave, _reason} -> :leave
               _ -> nil
             end
           end)
 
         case result do
+          :leave ->
+            push(
+              socket,
+              "shutdown",
+              DxCore.Core.AgentProtocol.shutdown(:no_more_work)
+            )
+
+            assign(socket, :left_early, true)
+
           {pid, run_id, task} ->
             push(socket, "assign_task", %{
               "task_id" => task.task_id,
@@ -199,11 +216,29 @@ defmodule DxCore.Core.ChannelHelpers do
       # Falls through to `:no_task` and the caller drops to the empty
       # result, leaving the existing `tasks_available` flow to retry on the
       # next broadcast.
-      defp safe_request_task(pid, agent_id, agent_info) do
-        DxCore.Core.Scheduler.request_task(pid, agent_id, agent_info)
+      defp safe_request_task(pid, agent_id, agent_info, opts) do
+        DxCore.Core.Scheduler.request_task(pid, agent_id, agent_info, opts)
       catch
         :exit, _ -> :no_task
       end
+
+      # An agent may be released from its run only when that run is the
+      # session's one run (a DTE session `gha-<run>-<attempt>` holds one):
+      # an agent of a session with several runs may still have work in
+      # another. A `tasks_available` hint names one scheduler, so the
+      # session's registry entries are checked too: only when they are
+      # exactly that scheduler is the option passed, and the run's own
+      # `early_leave` context still decides.
+      defp may_leave?(org_id, session_id, {pid, _run_id}, _schedulers) when is_pid(pid) do
+        case DxCore.Core.Scheduler.list_for_session(org_id, session_id) do
+          [{^pid, _}] -> true
+          _ -> false
+        end
+      catch
+        :exit, _ -> false
+      end
+
+      defp may_leave?(_org_id, _session_id, _hint, schedulers), do: length(schedulers) == 1
     end
   end
 end

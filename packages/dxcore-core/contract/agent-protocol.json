@@ -1,5 +1,11 @@
 {
   "defaultLeaseGraceMs": 210000,
+  "shutdownReasons": [
+    "session_finished",
+    "coordinator_shutdown",
+    "fair_share",
+    "no_more_work"
+  ],
   "taskFields": [
     "taskId",
     "task",

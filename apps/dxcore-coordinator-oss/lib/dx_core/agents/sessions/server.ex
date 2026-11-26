@@ -97,7 +97,7 @@ defmodule DxCore.Agents.Sessions.Server do
         DxCore.Agents.Web.Endpoint.broadcast!(
           "agent:#{session_id}",
           "shutdown",
-          %{"reason" => "session_finished"}
+          DxCore.Core.AgentProtocol.shutdown(:session_finished)
         )
 
         {:reply, {:ok, agent_ids}, %{state | sessions: sessions}}
@@ -169,7 +169,7 @@ defmodule DxCore.Agents.Sessions.Server do
           DxCore.Agents.Web.Endpoint.broadcast!(
             "agent:#{id}",
             "shutdown",
-            %{"reason" => "coordinator_shutdown"}
+            DxCore.Core.AgentProtocol.shutdown(:coordinator_shutdown)
           )
 
           {[id | acc_ids], Map.put(acc_sessions, id, %{session | status: :finished})}

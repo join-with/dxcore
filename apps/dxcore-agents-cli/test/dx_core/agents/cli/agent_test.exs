@@ -4,6 +4,7 @@ defmodule DxCore.Agents.CLI.AgentTest do
   import ExUnit.CaptureIO
 
   alias DxCore.Agents.CLI.Agent
+  alias DxCore.Agents.CLI.Test.AgentProtocol
 
   describe "parse_args/1" do
     test "extracts session_id and token flags" do
@@ -293,6 +294,22 @@ defmodule DxCore.Agents.CLI.AgentTest do
       msg = {:joined, "agent:s1"}
       # After removing idle timeout, handle_info returns {:noreply, state} (2-tuple, no timeout)
       assert {:noreply, _state} = Agent.handle_info(msg, state)
+    end
+
+    # Every reason the coordinator's contract lists (contract/agent-protocol.json
+    # of dxcore-core) ends an idle agent normally, so its CLI exits 0 and the
+    # job's later steps run.
+    test "every shutdown reason in the coordinator's contract stops an idle agent normally" do
+      reasons = AgentProtocol.read()["shutdownReasons"]
+      assert "no_more_work" in reasons
+
+      for reason <- reasons do
+        state = base_state()
+        msg = {:channel_message, "agent:s1", "shutdown", %{"reason" => reason}}
+        assert {:stop, :normal, ^state} = Agent.handle_info(msg, state)
+      end
+
+      refute_receive {:"$gen_cast", {:push, "task_result", _}}, 10
     end
 
     test "shutdown when idle stops without reporting task_result" do

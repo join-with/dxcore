@@ -1,0 +1,1000 @@
+{
+ "source": "GitHub Actions run 45796530258 (ci.yml, pull_request, 2026-11-26; 8 agents, its agents sat 32.7 agent-minutes after their own last task): its dispatch-graph artifact for dependencies and requirements, its CI Agent job logs for each executed task's agent, start and duration. Tasks the run did not execute (cache hits) are left out and dependencies through them are collapsed. Its 10 failed tasks are e2e parts no other task waits on, so the replay counts them finished.",
+ "run_end_ms": 1528696,
+ "agents": [
+  {
+   "agent_id": "agent-1",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 859
+  },
+  {
+   "agent_id": "agent-2",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 4773
+  },
+  {
+   "agent_id": "agent-3",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 2999
+  },
+  {
+   "agent_id": "agent-4",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 2171
+  },
+  {
+   "agent_id": "agent-5",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 5743
+  },
+  {
+   "agent_id": "agent-6",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 5303
+  },
+  {
+   "agent_id": "agent-7",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 19001
+  },
+  {
+   "agent_id": "agent-8",
+   "tags": {
+    "docker": "true",
+    "e2e": "true"
+   },
+   "joined_ms": 0
+  }
+ ],
+ "tasks": [
+  {
+   "task_id": "@repo/brainstretch-web-test-support#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 215669,
+   "agent_id": "agent-8",
+   "started_ms": 18
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 251590,
+   "agent_id": "agent-1",
+   "started_ms": 880
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#test-compile",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 81311,
+   "agent_id": "agent-4",
+   "started_ms": 2191
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 220701,
+   "agent_id": "agent-3",
+   "started_ms": 3016
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#dev-compile",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 122825,
+   "agent_id": "agent-2",
+   "started_ms": 4796
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-host#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 82339,
+   "agent_id": "agent-6",
+   "started_ms": 5327
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#test-compile-shell",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 79489,
+   "agent_id": "agent-5",
+   "started_ms": 5766
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#prod-compile",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 152767,
+   "agent_id": "agent-7",
+   "started_ms": 19040
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#test:part-2",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-shell-tests#test-compile"
+   ],
+   "duration_ms": 244759,
+   "agent_id": "agent-4",
+   "started_ms": 83541
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#test:part-3",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-shell-tests#test-compile"
+   ],
+   "duration_ms": 250434,
+   "agent_id": "agent-5",
+   "started_ms": 85280
+  },
+  {
+   "task_id": "@repo/brainstretch-chess-library#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 77994,
+   "agent_id": "agent-6",
+   "started_ms": 87694
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-e2e-support#e2e-db",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile"
+   ],
+   "duration_ms": 65255,
+   "agent_id": "agent-2",
+   "started_ms": 127650
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-host#e2e-assets",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build"
+   ],
+   "duration_ms": 13456,
+   "agent_id": "agent-6",
+   "started_ms": 165730
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 107802,
+   "agent_id": "agent-7",
+   "started_ms": 171929
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#build",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 192357,
+   "agent_id": "agent-6",
+   "started_ms": 179217
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#test:part-1",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-shell-tests#test-compile"
+   ],
+   "duration_ms": 207196,
+   "agent_id": "agent-2",
+   "started_ms": 192980
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#e2e-assets",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile"
+   ],
+   "duration_ms": 23769,
+   "agent_id": "agent-8",
+   "started_ms": 215715
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#test-compile",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#test-compile-shell"
+   ],
+   "duration_ms": 52700,
+   "agent_id": "agent-3",
+   "started_ms": 223742
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-all-games-e2e#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 377486,
+   "agent_id": "agent-8",
+   "started_ms": 239511
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 212206,
+   "agent_id": "agent-1",
+   "started_ms": 252512
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 185240,
+   "agent_id": "agent-3",
+   "started_ms": 276473
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-8",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 327358,
+   "agent_id": "agent-7",
+   "started_ms": 279781
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-5",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 173319,
+   "agent_id": "agent-4",
+   "started_ms": 328332
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-10",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 175276,
+   "agent_id": "agent-5",
+   "started_ms": 335767
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 182187,
+   "agent_id": "agent-6",
+   "started_ms": 371607
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 174249,
+   "agent_id": "agent-2",
+   "started_ms": 400211
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 160630,
+   "agent_id": "agent-3",
+   "started_ms": 461754
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-7",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 171494,
+   "agent_id": "agent-1",
+   "started_ms": 464757
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-journeys-e2e#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 508396,
+   "agent_id": "agent-4",
+   "started_ms": 501698
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-games-e2e#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 184465,
+   "agent_id": "agent-5",
+   "started_ms": 511067
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-9",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 167095,
+   "agent_id": "agent-6",
+   "started_ms": 553873
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-6",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 159172,
+   "agent_id": "agent-2",
+   "started_ms": 574490
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#e2e:part-4",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 293305,
+   "agent_id": "agent-7",
+   "started_ms": 607180
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-all-games-e2e#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 180102,
+   "agent_id": "agent-8",
+   "started_ms": 617022
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-e2e-host#e2e-assets",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 145671,
+   "agent_id": "agent-3",
+   "started_ms": 622418
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-site-e2e#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 173436,
+   "agent_id": "agent-1",
+   "started_ms": 636291
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-games-e2e#e2e:part-4",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 192938,
+   "agent_id": "agent-5",
+   "started_ms": 695578
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-all-games-e2e#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 169977,
+   "agent_id": "agent-6",
+   "started_ms": 721004
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-site-e2e#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 160261,
+   "agent_id": "agent-2",
+   "started_ms": 733732
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-games-e2e#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 145129,
+   "agent_id": "agent-3",
+   "started_ms": 768124
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-journeys-e2e#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 302179,
+   "agent_id": "agent-8",
+   "started_ms": 797209
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#test:part-1",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#test-compile"
+   ],
+   "duration_ms": 79423,
+   "agent_id": "agent-1",
+   "started_ms": 809796
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-styleguide-tests#build"
+   ],
+   "duration_ms": 17960,
+   "agent_id": "agent-5",
+   "started_ms": 888556
+  },
+  {
+   "task_id": "//#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 145896,
+   "agent_id": "agent-1",
+   "started_ms": 889252
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-games-e2e#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 129596,
+   "agent_id": "agent-6",
+   "started_ms": 891030
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-site-e2e#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-hub#dev-compile",
+    "@repo/brainstretch-hub#e2e-assets",
+    "@repo/brainstretch-hub-e2e-support#e2e-db"
+   ],
+   "duration_ms": 117110,
+   "agent_id": "agent-2",
+   "started_ms": 894045
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#build",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-chess-library#build",
+    "@repo/brainstretch-hub#prod-compile",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 228793,
+   "agent_id": "agent-7",
+   "started_ms": 900572
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e:part-1",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-styleguide-tests#build",
+    "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 111380,
+   "agent_id": "agent-5",
+   "started_ms": 906550
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e:part-4",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-styleguide-tests#build",
+    "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 336237,
+   "agent_id": "agent-3",
+   "started_ms": 913315
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e:part-3",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-styleguide-tests#build",
+    "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 406911,
+   "agent_id": "agent-4",
+   "started_ms": 1010117
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e:part-5",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-styleguide-tests#build",
+    "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 517494,
+   "agent_id": "agent-2",
+   "started_ms": 1011201
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#test:part-3",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#test-compile"
+   ],
+   "duration_ms": 94842,
+   "agent_id": "agent-5",
+   "started_ms": 1017954
+  },
+  {
+   "task_id": "@repo/brainstretch-hub#test:part-2",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-hub#test-compile"
+   ],
+   "duration_ms": 116054,
+   "agent_id": "agent-6",
+   "started_ms": 1020680
+  },
+  {
+   "task_id": "@repo/brainstretch-chess-library#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-chess-library#build",
+    "@repo/brainstretch-web-shell#build"
+   ],
+   "duration_ms": 71865,
+   "agent_id": "agent-1",
+   "started_ms": 1035225
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-styleguide-tests#build"
+   ],
+   "duration_ms": 64771,
+   "agent_id": "agent-8",
+   "started_ms": 1099416
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#e2e:part-2",
+   "requirements": {
+    "e2e": "true"
+   },
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-styleguide#build",
+    "@repo/brainstretch-web-styleguide-tests#build",
+    "@repo/brainstretch-web-styleguide-tests#e2e-assets",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 68057,
+   "agent_id": "agent-1",
+   "started_ms": 1107128
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-host#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 64484,
+   "agent_id": "agent-5",
+   "started_ms": 1112884
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-assets#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 58743,
+   "agent_id": "agent-7",
+   "started_ms": 1129430
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core-repo-checks#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 21219,
+   "agent_id": "agent-6",
+   "started_ms": 1136765
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage-repo-checks#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 22309,
+   "agent_id": "agent-6",
+   "started_ms": 1158070
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 18002,
+   "agent_id": "agent-8",
+   "started_ms": 1164221
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-shell#build"
+   ],
+   "duration_ms": 15139,
+   "agent_id": "agent-1",
+   "started_ms": 1175228
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage#test",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build",
+    "@repo/brainstretch-web-shell#build",
+    "@repo/brainstretch-web-test-support#build"
+   ],
+   "duration_ms": 18951,
+   "agent_id": "agent-5",
+   "started_ms": 1177398
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-shell-tests#build"
+   ],
+   "duration_ms": 16071,
+   "agent_id": "agent-6",
+   "started_ms": 1180464
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-styleguide#build"
+   ],
+   "duration_ms": 13232,
+   "agent_id": "agent-8",
+   "started_ms": 1182284
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-host#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-e2e-host#build"
+   ],
+   "duration_ms": 14051,
+   "agent_id": "agent-7",
+   "started_ms": 1188216
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-assets#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 9934,
+   "agent_id": "agent-1",
+   "started_ms": 1190400
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-web-styleguide-tests#build"
+   ],
+   "duration_ms": 16879,
+   "agent_id": "agent-8",
+   "started_ms": 1195554
+  },
+  {
+   "task_id": "@repo/brainstretch-hub-repo-checks#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 6313,
+   "agent_id": "agent-5",
+   "started_ms": 1196381
+  },
+  {
+   "task_id": "@repo/brainstretch-legal-evals#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 5367,
+   "agent_id": "agent-6",
+   "started_ms": 1196567
+  },
+  {
+   "task_id": "@repo/brainstretch-chess-library#lint-format",
+   "requirements": {},
+   "dependencies": [
+    "@repo/brainstretch-chess-library#build"
+   ],
+   "duration_ms": 5941,
+   "agent_id": "agent-1",
+   "started_ms": 1200358
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-core#check-types",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 4429,
+   "agent_id": "agent-6",
+   "started_ms": 1201960
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-assets#lint-format",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 6442,
+   "agent_id": "agent-7",
+   "started_ms": 1202312
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests-repo-checks#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 4720,
+   "agent_id": "agent-5",
+   "started_ms": 1202727
+  },
+  {
+   "task_id": "@repo/brainstretch-web-styleguide-tests#check-types",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 3369,
+   "agent_id": "agent-1",
+   "started_ms": 1206327
+  },
+  {
+   "task_id": "//#boundaries",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 3812,
+   "agent_id": "agent-6",
+   "started_ms": 1206423
+  },
+  {
+   "task_id": "@repo/brainstretch-web-test-support#lint-format",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 4298,
+   "agent_id": "agent-5",
+   "started_ms": 1207477
+  },
+  {
+   "task_id": "@repo/brainstretch-e2e-stage#check-types",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 4891,
+   "agent_id": "agent-7",
+   "started_ms": 1208799
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell#lint-deps",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 3227,
+   "agent_id": "agent-1",
+   "started_ms": 1209729
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell-tests#lint-deps",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 2664,
+   "agent_id": "agent-6",
+   "started_ms": 1210260
+  },
+  {
+   "task_id": "@repo/brainstretch-web-test-support#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 1718,
+   "agent_id": "agent-5",
+   "started_ms": 1211798
+  },
+  {
+   "task_id": "@repo/brainstretch-web-shell#test",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 1752,
+   "agent_id": "agent-8",
+   "started_ms": 1212536
+  },
+  {
+   "task_id": "@repo/brainstretch-web-test-support#lint-deps",
+   "requirements": {},
+   "dependencies": [],
+   "duration_ms": 2218,
+   "agent_id": "agent-6",
+   "started_ms": 1212957
+  }
+ ]
+}
