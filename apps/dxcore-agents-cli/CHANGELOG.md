@@ -1,5 +1,14 @@
 # @repo/dxcore-agents-cli
 
+## 0.12.1
+
+### Patch Changes
+
+- a2e8098: The repo-cli pin is now a package, `@repo/toolchain` (`packages/toolchain/repo-cli.toml`, which mise reads through the `.config/mise/conf.d/repo-cli.toml` symlink), instead of a file every task names by path (#17873 part 10). Each package with a script that runs repo-cli lists `@repo/toolchain` in devDependencies, and its repo-cli tasks reach the pin through `^toolchain` (or an existing `^build` chain), so the `$TURBO_ROOT$/.config/mise/conf.d/repo-cli.toml` inputs are gone from every turbo.json and from the brainstretch-gen templates. A pin bump still reruns every task that runs repo-cli. The root `toolchain` task now hashes only a package's manifest and reaches only the toolchains a package lists itself, so the contract packages and the Brainstretch self-check helpers drop their own `toolchain` overrides, and the JDK, Ruby and Zig toolchain packages state their inputs in their own turbo.json.
+- Updated dependencies [a2e8098]
+  - @repo/dxcore-contract@0.3.1
+  - @repo/toolchain-zig@0.0.1
+
 ## 0.12.0
 
 ### Minor Changes
