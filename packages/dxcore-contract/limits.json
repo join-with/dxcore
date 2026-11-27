@@ -1,0 +1,11 @@
+{
+  "window": {
+    "max_run_seconds": 3540,
+    "verdict_margin_seconds": 20,
+    "max_hard_stop_seconds": 600,
+    "dte_job_timer_seconds": 3600
+  },
+  "planner": {
+    "max_agents_per_run": 8
+  }
+}

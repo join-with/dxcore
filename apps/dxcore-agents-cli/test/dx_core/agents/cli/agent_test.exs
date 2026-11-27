@@ -296,8 +296,8 @@ defmodule DxCore.Agents.CLI.AgentTest do
       assert {:noreply, _state} = Agent.handle_info(msg, state)
     end
 
-    # Every reason the coordinator's contract lists (contract/agent-protocol.json
-    # of dxcore-core) ends an idle agent normally, so its CLI exits 0 and the
+    # Every reason the coordinator's contract lists (agent-protocol.json of
+    # @repo/dxcore-contract) ends an idle agent normally, so its CLI exits 0 and the
     # job's later steps run.
     test "every shutdown reason in the coordinator's contract stops an idle agent normally" do
       reasons = AgentProtocol.read()["shutdownReasons"]

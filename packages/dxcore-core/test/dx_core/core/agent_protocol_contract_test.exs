@@ -1,15 +1,20 @@
 defmodule DxCore.Core.AgentProtocolContractTest do
-  # contract/agent-protocol.json publishes the facts an agent must meet:
-  # the task fields TaskGraph reads, how long the scheduler holds a dropped
-  # agent's task, and the reasons a "shutdown" push may carry. Agents
-  # (apps/dxcore-agents-cli) read that file through their workspace
-  # dependency on this package, never this code, so these tests keep the
-  # file equal to what the code does.
+  # @repo/dxcore-contract's agent-protocol.json publishes the facts an agent
+  # must meet: the task fields TaskGraph reads, how long the scheduler holds a
+  # dropped agent's task, and the reasons a "shutdown" push may carry. Agents
+  # (apps/dxcore-agents-cli) read that file through their own workspace
+  # dependency on the contract, never this code, so these tests keep the
+  # file equal to what the code does. It is read beside this package
+  # (`packages/dxcore-contract`), a layout the dxcore OSS repo shares, whose
+  # CI runs Mix only; package.json's devDependency reruns these tests.
   use ExUnit.Case, async: true
 
   alias DxCore.Core.Scheduler
 
-  @contract_path Path.expand("../../../contract/agent-protocol.json", __DIR__)
+  @contract_path Path.expand(
+                   "../../../../dxcore-contract/agent-protocol.json",
+                   __DIR__
+                 )
   @task_graph_path Path.expand("../../../lib/dx_core/core/task_graph.ex", __DIR__)
 
   defp contract, do: @contract_path |> File.read!() |> Jason.decode!()

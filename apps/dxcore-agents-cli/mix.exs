@@ -34,11 +34,7 @@ defmodule DxCore.Agents.CLI.MixProject do
       # Finch 0.24 closes an HTTP/1 connection after a receive timeout instead
       # of pooling it with the old request in flight (Mint 1.11, #18821).
       {:finch, "~> 0.24"},
-      {:burrito, "~> 1.0"},
-      # Only for the published agent protocol (contract/agent-protocol.json)
-      # the tests check against: dxcore-core's own code is never compiled or
-      # loaded, though Mix still resolves its hex deps in the test env.
-      {:dxcore_core, path: "../../packages/dxcore-core", only: :test, compile: false, app: false}
+      {:burrito, "~> 1.0"}
     ]
   end
 

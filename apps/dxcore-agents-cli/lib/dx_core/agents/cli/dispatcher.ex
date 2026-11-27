@@ -676,12 +676,14 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   end
 
   # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
-  # `parse_task/1`, published as `taskFields` in dxcore-core's
-  # contract/agent-protocol.json, which dispatcher_test.exs checks this
-  # against). A build system's task carries much more: a turbo dry-run task
-  # holds every input file's hash, its env vars and its resolved definition,
-  # about 11 KB a task, which on an 800-task graph OOM-killed the coordinator.
-  @wire_fields ~w(taskId task package hash command dependencies dependents cache cacheable shard requirements)
+  # `parse_task/1`), published as `taskFields` in @repo/dxcore-contract's
+  # agent-protocol.json, which dxcore-core's tests keep equal to TaskGraph.
+  # A build system's task carries much more: a turbo dry-run task holds every
+  # input file's hash, its env vars and its resolved definition, about 11 KB a
+  # task, which on an 800-task graph OOM-killed the coordinator.
+  @external_resource DxCore.Agents.CLI.Contract.path("agent-protocol.json")
+  @wire_fields DxCore.Agents.CLI.Contract.read!("agent-protocol.json")
+               |> Map.fetch!("taskFields")
 
   @doc "Keeps only the fields of a task the coordinator reads."
   def wire_task(task) when is_map(task), do: Map.take(task, @wire_fields)

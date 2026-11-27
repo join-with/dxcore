@@ -1,7 +1,7 @@
 defmodule DxCore.Core.AgentProtocol do
   @moduledoc """
   The coordinator side of the agent protocol facts that
-  `contract/agent-protocol.json` publishes to agents
+  `agent-protocol.json` of `@repo/dxcore-contract` publishes to agents
   (`AgentProtocolContractTest` keeps the two equal).
 
   A `"shutdown"` push carries `%{"reason" => reason}` with one of

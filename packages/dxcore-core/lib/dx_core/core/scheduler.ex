@@ -108,8 +108,9 @@ defmodule DxCore.Core.Scheduler do
   # coordinator lets its task run on, then stops it and reconnects to report
   # it: apps/dxcore-agents-cli's DxCore.Agents.CLI.LostCoordinator owns those
   # numbers, and its lease_needed_ms/0 is the shortest hold that keeps the
-  # task off a second agent meanwhile. contract/agent-protocol.json publishes
-  # it as `defaultLeaseGraceMs` (a test here keeps the two equal), and a CLI
+  # task off a second agent meanwhile. @repo/dxcore-contract's
+  # agent-protocol.json publishes it as `defaultLeaseGraceMs` (a test here
+  # keeps the two equal), and a CLI
   # test fails if it drops below that. It also outlasts a drain, whose sockets
   # stay on the old pod for its drain wait (10 s) while the scheduler has
   # already moved.

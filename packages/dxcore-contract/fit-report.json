@@ -1,0 +1,16 @@
+{
+  "kinds": [
+    "task_over_limit",
+    "critical_path_over_window",
+    "setup_over_limit",
+    "overflow_used",
+    "not_enough_agents",
+    "idle_with_ready_work",
+    "prediction_off",
+    "exception_too_loose",
+    "unknown_duration",
+    "started_without_room",
+    "long_window",
+    "moved_to_long"
+  ]
+}

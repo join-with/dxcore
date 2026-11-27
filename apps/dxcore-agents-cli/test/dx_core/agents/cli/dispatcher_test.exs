@@ -4,7 +4,6 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
   import ExUnit.CaptureIO
 
   alias DxCore.Agents.CLI.Dispatcher
-  alias DxCore.Agents.CLI.Test.AgentProtocol
 
   describe "parse_args/1" do
     test "extracts required flags" do
@@ -800,17 +799,6 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
-    end
-  end
-
-  describe "wire_fields/0" do
-    # The coordinator lives in another package, so the field list can't be
-    # shared code; dxcore-core publishes it in its agent protocol contract,
-    # and this fails when the two drift apart.
-    test "are exactly the task fields the coordinator's TaskGraph reads" do
-      read_by_coordinator = AgentProtocol.read()["taskFields"]
-
-      assert Enum.sort(Dispatcher.wire_fields()) == Enum.sort(read_by_coordinator)
     end
   end
 

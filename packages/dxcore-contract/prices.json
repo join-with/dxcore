@@ -1,0 +1,40 @@
+{
+  "sources": {
+    "ubicloud": "https://www.ubicloud.com/docs/about/pricing",
+    "github": "https://docs.github.com/en/billing/reference/actions-runner-pricing",
+    "blacksmith": "https://www.blacksmith.sh/pricing",
+    "dxcore_ci": "https://github.com/join-with/joinwith/issues/14701",
+    "jw_box": "https://github.com/join-with/joinwith/issues/13663"
+  },
+  "runners": [
+    { "label": "ubicloud-standard-2", "micros": 1250, "source": "ubicloud" },
+    { "label": "ubicloud-standard-4", "micros": 2500, "source": "ubicloud" },
+    { "label": "ubicloud-standard-8", "micros": 5000, "source": "ubicloud" },
+    { "label": "ubuntu-latest", "micros": 6000, "source": "github" },
+    { "label": "ubuntu-24.04", "micros": 6000, "source": "github" },
+    { "label": "ubuntu-22.04", "micros": 6000, "source": "github" },
+    {
+      "label": "blacksmith-2vcpu-ubuntu-2404",
+      "micros": 4000,
+      "source": "blacksmith"
+    },
+    {
+      "label": "blacksmith-4vcpu-ubuntu-2404",
+      "micros": 8000,
+      "source": "blacksmith"
+    },
+    { "label": "dxcore-ci-agent", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-gate", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-small", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-seed", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-plan", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-wait", "micros": 0, "source": "dxcore_ci" },
+    { "label": "dxcore-ci-release", "micros": 0, "source": "dxcore_ci" },
+    { "label": "ubicloud-vm-standard-2", "micros": 1040, "source": "ubicloud" },
+    { "label": "ubicloud-vm-standard-4", "micros": 2080, "source": "ubicloud" },
+    { "label": "ubicloud-vm-standard-8", "micros": 4160, "source": "ubicloud" },
+    { "label": "ubicloud-vm-standard-16", "micros": 8310, "source": "ubicloud" },
+    { "label": "jw-box-test", "micros": 0, "source": "jw_box" },
+    { "label": "jw-cloud-test", "micros": 0, "source": "jw_box" }
+  ]
+}
