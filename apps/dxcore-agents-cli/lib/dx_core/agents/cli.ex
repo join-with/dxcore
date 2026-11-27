@@ -2,7 +2,7 @@ defmodule DxCore.Agents.CLI do
   @moduledoc """
   Escript entry point. Supports two modes:
   - `agent` -- connects to coordinator, executes assigned tasks
-  - `dispatch` -- runs turbo --dry=json, submits graph to coordinator
+  - `dispatch` -- reads a task graph on stdin, submits it to the coordinator
   """
 
   @doc """

@@ -40,7 +40,7 @@ defmodule DxCore.Agents.CLI.HelpTest do
     end
 
     test "dispatcher error message uses dxcore not dxcore-agents" do
-      {:error, msg} = DxCore.Agents.CLI.Dispatcher.read_stdin("", "turbo")
+      {:error, msg} = DxCore.Agents.CLI.Dispatcher.read_stdin("", "generic")
       refute msg =~ "dxcore-agents"
       assert msg =~ "dxcore dispatch"
     end

@@ -22,16 +22,11 @@ defmodule DxCore.Agents.BuildSystem.NxTest do
       assert lib_build["package"] == "mylib"
       assert lib_build["hash"] == ""
       assert lib_build["dependencies"] == []
-      assert "myapp:build" in lib_build["dependents"]
     end
 
-    test "computes dependents by inverting dependencies", %{json: json} do
-      {:ok, tasks} = Nx.parse_graph(json)
-      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
-
-      assert by_id["mylib:build"]["dependents"] == ["myapp:build"]
-      assert by_id["myapp:build"]["dependents"] == ["myapp:test"]
-      assert by_id["myapp:test"]["dependents"] == []
+    test "sends no dependents: the coordinator derives them", %{json: json} do
+      assert {:ok, tasks} = Nx.parse_graph(json)
+      refute Enum.any?(tasks, &Map.has_key?(&1, "dependents"))
     end
 
     test "sets cache status to MISS for all tasks", %{json: json} do

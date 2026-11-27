@@ -10,7 +10,6 @@
       "hash": "abc123",
       "command": "mix compile",
       "dependencies": [],
-      "dependents": ["cli#release-dev"],
       "cache": { "status": "MISS" },
       "requirements": {"zig": "true"}
     },
@@ -21,7 +20,6 @@
       "hash": "def456",
       "command": "repo-cli release publish --env dev",
       "dependencies": ["cli#build"],
-      "dependents": [],
       "cache": { "status": "MISS" },
       "requirements": {"zig": "true", "github-release": "true"}
     },
@@ -32,7 +30,6 @@
       "hash": "ghi789",
       "command": "docker build",
       "dependencies": [],
-      "dependents": [],
       "cache": { "status": "MISS" }
     }
   ]

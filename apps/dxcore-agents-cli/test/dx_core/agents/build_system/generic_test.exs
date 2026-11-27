@@ -35,13 +35,9 @@ defmodule DxCore.Agents.BuildSystem.GenericTest do
       assert by_id["test-api"]["dependencies"] == ["migrate", "seed"]
     end
 
-    test "computes dependents from dependencies (inverse mapping)", %{json: json} do
+    test "sends no dependents: the coordinator derives them", %{json: json} do
       assert {:ok, tasks} = Generic.parse_graph(json)
-      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
-
-      assert Enum.sort(by_id["migrate"]["dependents"]) == Enum.sort(["seed", "test-api"])
-      assert by_id["seed"]["dependents"] == ["test-api"]
-      assert by_id["test-api"]["dependents"] == []
+      refute Enum.any?(tasks, &Map.has_key?(&1, "dependents"))
     end
 
     test "sets defaults for hash and cache", %{json: json} do
@@ -51,6 +47,38 @@ defmodule DxCore.Agents.BuildSystem.GenericTest do
         assert task["hash"] == ""
         assert task["cache"] == %{"status" => "MISS"}
       end)
+    end
+
+    test "keeps the fields of dxcore's format it was given" do
+      json =
+        Jason.encode!(%{
+          "tasks" => [
+            %{
+              "taskId" => "a#e2e",
+              "package" => "a",
+              "task" => "e2e",
+              "command" => "npx turbo run e2e --filter=a",
+              "hash" => "h1",
+              "cache" => %{"status" => "HIT"},
+              "cacheable" => false,
+              "requirements" => %{"e2e" => "true"}
+            }
+          ]
+        })
+
+      assert {:ok, [task]} = Generic.parse_graph(json)
+
+      assert task == %{
+               "taskId" => "a#e2e",
+               "package" => "a",
+               "task" => "e2e",
+               "command" => "npx turbo run e2e --filter=a",
+               "hash" => "h1",
+               "dependencies" => [],
+               "cache" => %{"status" => "HIT"},
+               "cacheable" => false,
+               "requirements" => %{"e2e" => "true"}
+             }
     end
 
     test "handles empty tasks list" do

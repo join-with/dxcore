@@ -9,9 +9,7 @@
       "package": "@repo/ui",
       "hash": "abc123",
       "command": "vite build",
-      "outputs": ["dist/**"],
       "dependencies": [],
-      "dependents": ["admin#build", "api#build"],
       "cache": { "status": "HIT" }
     },
     {
@@ -20,9 +18,7 @@
       "package": "admin",
       "hash": "def456",
       "command": "next build",
-      "outputs": [".next/**"],
       "dependencies": ["@repo/ui#build"],
-      "dependents": ["admin#test"],
       "cache": { "status": "MISS" }
     },
     {
@@ -31,9 +27,7 @@
       "package": "api",
       "hash": "ghi789",
       "command": "tsc",
-      "outputs": ["dist/**"],
       "dependencies": ["@repo/ui#build"],
-      "dependents": [],
       "cache": { "status": "MISS" }
     },
     {
@@ -42,9 +36,7 @@
       "package": "admin",
       "hash": "jkl012",
       "command": "jest",
-      "outputs": ["coverage/**"],
       "dependencies": ["admin#build"],
-      "dependents": [],
       "cache": { "status": "MISS" }
     }
   ]

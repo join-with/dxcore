@@ -5,14 +5,16 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   @help """
   Submit task graph and wait for completion.
 
-  Usage: <build-system> --dry=json | dxcore dispatch [options]
+  Usage: <task graph JSON> | dxcore dispatch [options]
 
   Options:
     --coordinator, -c <url>       Coordinator URL (required)
     --session-id, -s <id>         Session ID (required)
     --token, -t <token>           Auth token (required)
     --timeout, -T <seconds>       Max idle wait for completion (default: 900)
-    --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
+    --build-system, -b <system>   generic|nx|docker|gradle (default: "generic",
+                                  dxcore's own graph; a turbo dry run is converted
+                                  to it by packages/dxcore-turbo-graph)
     --work-dir, -w <path>         Working directory for dxcore.json scanning (default: ".")
     --deadline <time>             ISO 8601 time with an offset: no new tasks after it,
                                   exit 75 when tasks are left (default: none)
@@ -81,7 +83,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
     session_id = Keyword.fetch!(opts, :session_id)
     token = Keyword.fetch!(opts, :token)
     timeout_ms = Keyword.get(opts, :timeout, @default_timeout_s) * 1000
-    build_system = Keyword.get(opts, :build_system, "turbo")
+    build_system = Keyword.get(opts, :build_system, "generic")
     failure_strategy = opts[:failure_strategy]
 
     result_file = opts[:result_file]
@@ -174,11 +176,13 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
   Takes raw stdin string and build system name. Returns `{:ok, tasks}` or `{:error, message}`.
   """
+  @turbo_example "turbo run build --dry=json | node packages/dxcore-turbo-graph/bin/dxcore-turbo-graph.mjs | dxcore dispatch ..."
+
   def read_stdin(input, build_system)
 
   def read_stdin(:eof, _build_system) do
     {:error,
-     "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore dispatch ..."}
+     "No task graph provided on stdin. Pipe dxcore's task graph, e.g.:\n  #{@turbo_example}"}
   end
 
   def read_stdin(input, build_system) when is_binary(input) do
@@ -186,7 +190,7 @@ defmodule DxCore.Agents.CLI.Dispatcher do
 
     if input == "" do
       {:error,
-       "No task graph provided on stdin. Pipe build system output, e.g.:\n  turbo run build --dry=json | dxcore dispatch ..."}
+       "No task graph provided on stdin. Pipe dxcore's task graph, e.g.:\n  #{@turbo_example}"}
     else
       case DxCore.Agents.BuildSystem.resolve(build_system) do
         {:ok, adapter} -> adapter.parse_graph(input)
@@ -585,12 +589,10 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   defp submit_graph(%{tasks: tasks} = state) do
     IO.puts("[dispatcher:#{state.session_id}] Connected, submitting task graph...")
 
-    resolved_tasks = tasks |> resolve_requirements() |> Enum.map(&wire_task/1)
-
     payload = %{
       "run_id" => state.run_id,
       "session_id" => state.session_id,
-      "tasks" => resolved_tasks,
+      "tasks" => tasks,
       "shard_config" => state.shard_config || %{}
     }
 
@@ -674,62 +676,6 @@ defmodule DxCore.Agents.CLI.Dispatcher do
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end
-
-  # The fields the coordinator builds its graph from (`DxCore.Core.TaskGraph`
-  # `parse_task/1`), published as `taskFields` in @repo/dxcore-contract's
-  # agent-protocol.json, which dxcore-core's tests keep equal to TaskGraph.
-  # A build system's task carries much more: a turbo dry-run task holds every
-  # input file's hash, its env vars and its resolved definition, about 11 KB a
-  # task, which on an 800-task graph OOM-killed the coordinator.
-  @external_resource DxCore.Agents.CLI.Contract.path("agent-protocol.json")
-  @wire_fields DxCore.Agents.CLI.Contract.read!("agent-protocol.json")
-               |> Map.fetch!("taskFields")
-
-  @doc "Keeps only the fields of a task the coordinator reads."
-  def wire_task(task) when is_map(task), do: Map.take(task, @wire_fields)
-
-  @doc false
-  def wire_fields, do: @wire_fields
-
-  @doc """
-  Resolves dxcore requirements from each task's package.json.
-
-  For each task, reads `package.json` from the task's `directory` field,
-  extracts `dxcore.requirements`, and matches by exact task name or `*` fallback.
-  Attaches the resolved `requirements` map to each task.
-  """
-  def resolve_requirements(tasks) do
-    Enum.map(tasks, fn
-      # A graph built off the checkout (ci.yml's plan job, #15513) carries
-      # each task's requirements; there is no package.json to read here.
-      %{"requirements" => reqs} = task when is_map(reqs) and not is_map_key(task, "directory") ->
-        task
-
-      task ->
-        Map.put(task, "requirements", resolve_task_requirements(task))
-    end)
-  end
-
-  defp resolve_task_requirements(%{"directory" => dir, "task" => task_name})
-       when is_binary(dir) do
-    package_json_path = Path.join(dir, "package.json")
-
-    case File.read(package_json_path) do
-      {:ok, content} ->
-        case Jason.decode(content) do
-          {:ok, %{"dxcore" => %{"requirements" => reqs}}} when is_map(reqs) ->
-            Map.get(reqs, task_name, Map.get(reqs, "*", %{}))
-
-          _ ->
-            %{}
-        end
-
-      {:error, _} ->
-        %{}
-    end
-  end
-
-  defp resolve_task_requirements(_), do: %{}
 
   @doc "Format a run summary map into a printable string."
   def format_summary(summary) do

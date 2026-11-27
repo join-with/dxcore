@@ -13,16 +13,15 @@ Key modules in `lib/dx_core/agents/`:
 - **CLI.CI** — CI environment detection and configuration
 - **CLI.Dispatcher** — Task dispatch and coordination logic
 - **BuildSystem** — Abstraction for monorepo build systems
-- **BuildSystem.Turbo** — Turborepo-specific task graph parsing
 - **BuildSystem.Nx** — Nx-specific task graph parsing
 - **BuildSystem.Gradle** — Gradle-specific task graph parsing
-- **BuildSystem.Generic** — Generic JSON task graph parsing
+- **BuildSystem.Generic** — dxcore's own task graph, sent as given (`dispatch`'s default; a turbo dry run is converted to it by `packages/dxcore-turbo-graph`, the one converter)
 - **BuildSystem.Docker** — Docker buildx task graph parsing
 - **WsClient** — WebSocket client for coordinator communication
 
 ## Key Patterns
 
-- Build system auto-detection (Turbo vs Nx) based on project files
+- The build system is chosen with `--build-system` (`generic`, `nx`, `docker`, `gradle`); every adapter writes dxcore's own task format, which the coordinator only validates
 - WebSocket-based communication with coordinator
 - Task execution with streaming output
 

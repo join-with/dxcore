@@ -9,9 +9,7 @@
       "package": "pkg",
       "hash": "aaa",
       "command": "mix lint",
-      "outputs": [],
       "dependencies": [],
-      "dependents": ["pkg#build", "pkg#test"],
       "cache": { "status": "MISS" }
     },
     {
@@ -20,9 +18,7 @@
       "package": "pkg",
       "hash": "bbb",
       "command": "mix compile",
-      "outputs": [],
       "dependencies": ["pkg#lint"],
-      "dependents": ["pkg#deploy"],
       "cache": { "status": "MISS" }
     },
     {
@@ -31,9 +27,7 @@
       "package": "pkg",
       "hash": "ccc",
       "command": "mix test",
-      "outputs": [],
       "dependencies": ["pkg#lint"],
-      "dependents": ["pkg#deploy"],
       "cache": { "status": "MISS" }
     },
     {
@@ -42,9 +36,7 @@
       "package": "pkg",
       "hash": "ddd",
       "command": "mix deploy",
-      "outputs": [],
       "dependencies": ["pkg#build", "pkg#test"],
-      "dependents": [],
       "cache": { "status": "MISS" }
     }
   ]

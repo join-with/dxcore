@@ -59,6 +59,21 @@ defmodule DxCore.Agents.Web.DispatcherChannelTest do
       }
     end
 
+    test "refuses a graph not in dxcore's format with the validator's message", %{
+      socket: socket
+    } do
+      ref =
+        push(socket, "submit_graph", %{
+          "run_id" => "test-run",
+          "tasks" => [%{"taskId" => "a#build", "dependents" => []}]
+        })
+
+      assert_reply ref, :error, %{
+        "reason" => "invalid_graph",
+        "message" => "task a#build: unknown fields dependents"
+      }
+    end
+
     test "with cache hits reports cached count", %{socket: socket} do
       json = File.read!(Path.join(@fixtures_dir, "dry_run_with_cache_hits.json"))
       {:ok, parsed} = Jason.decode(json)

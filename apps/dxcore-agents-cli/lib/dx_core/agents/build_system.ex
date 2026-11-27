@@ -2,8 +2,9 @@ defmodule DxCore.Agents.BuildSystem do
   @moduledoc """
   Behaviour for build system adapters.
 
-  Each adapter normalizes a build system's task graph JSON into the
-  coordinator's expected format. The `command` field must be populated
+  Each adapter normalizes a build system's task graph JSON into dxcore's own
+  format (`DxCore.Agents.BuildSystem.Generic` describes it), which the
+  coordinator validates and never converts. The `command` field must be populated
   during `parse_graph/1` — the coordinator forwards it to agents for execution.
   """
 
@@ -11,19 +12,18 @@ defmodule DxCore.Agents.BuildSystem do
   Parse a build system's JSON output into normalized task maps.
 
   Accepts the raw JSON string from the build system's introspection command
-  (e.g. `turbo run build --dry=json` or `nx run-many --graph=stdout`).
+  (e.g. `nx run-many --graph=stdout`, or dxcore's own graph).
 
   Returns `{:ok, tasks}` where `tasks` is a list of normalized task maps.
-  The `taskId` format is build-system-specific (Turbo uses `#`, Nx uses `:`):
+  The `taskId` format is build-system-specific (Nx uses `project:target`):
 
       %{
-        "taskId" => "package#task",   # or "package:task" for Nx
+        "taskId" => "mylib:build",
         "task" => "build",
         "package" => "mylib",
-        "hash" => "abc123",           # may be "" if unavailable (e.g. Nx)
-        "command" => "npx turbo run build --filter=mylib",
-        "dependencies" => ["core#build"],
-        "dependents" => ["app#build"],
+        "hash" => "",                 # "" when the build system has none
+        "command" => "npx nx run mylib:build",
+        "dependencies" => ["core:build"],
         "cache" => %{"status" => "MISS"}
       }
   """
@@ -31,7 +31,13 @@ defmodule DxCore.Agents.BuildSystem do
               {:ok, [map()]} | {:error, String.t()}
 
   @doc "Resolve a build system name to its adapter module."
-  def resolve("turbo"), do: {:ok, DxCore.Agents.BuildSystem.Turbo}
+  def resolve("turbo"),
+    do:
+      {:error,
+       "A turbo dry run is converted to dxcore's graph first: " <>
+         "turbo run <tasks> --dry=json | node packages/dxcore-turbo-graph/bin/dxcore-turbo-graph.mjs | " <>
+         "dxcore dispatch --build-system=generic ..."}
+
   def resolve("nx"), do: {:ok, DxCore.Agents.BuildSystem.Nx}
   def resolve("generic"), do: {:ok, DxCore.Agents.BuildSystem.Generic}
   def resolve("docker"), do: {:ok, DxCore.Agents.BuildSystem.Docker}

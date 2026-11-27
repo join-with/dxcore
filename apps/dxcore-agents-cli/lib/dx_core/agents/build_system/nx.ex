@@ -9,17 +9,13 @@ defmodule DxCore.Agents.BuildSystem.Nx do
 
   @behaviour DxCore.Agents.BuildSystem
 
-  alias DxCore.Agents.BuildSystem.GraphHelpers
-
   @impl true
   def parse_graph(json) do
     case Jason.decode(json) do
       {:ok, %{"tasks" => %{"tasks" => tasks_map, "dependencies" => deps_map}}} ->
-        dependents_map = GraphHelpers.invert_dependencies(deps_map)
-
         tasks =
           tasks_map
-          |> Enum.map(fn {_id, task} -> normalize_task(task, deps_map, dependents_map) end)
+          |> Enum.map(fn {_id, task} -> normalize_task(task, deps_map) end)
 
         {:ok, tasks}
 
@@ -31,7 +27,7 @@ defmodule DxCore.Agents.BuildSystem.Nx do
     end
   end
 
-  defp normalize_task(task, deps_map, dependents_map) do
+  defp normalize_task(task, deps_map) do
     id = task["id"]
     package = get_in(task, ["target", "project"])
     target = get_in(task, ["target", "target"])
@@ -44,7 +40,6 @@ defmodule DxCore.Agents.BuildSystem.Nx do
       "command" => "npx nx run #{package}:#{target}",
       "cacheable" => Map.get(task, "cache", false),
       "dependencies" => Map.get(deps_map, id, []),
-      "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}
     }
   end

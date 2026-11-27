@@ -13,7 +13,8 @@ defmodule DxCore.Agents.CLI.Agent do
     --session-id, -s <id>         Session ID (required)
     --token, -t <token>           Auth token (required)
     --work-dir, -w <path>         Working directory (default: ".")
-    --build-system, -b <system>   turbo|nx|generic|docker (default: "turbo")
+    --build-system, -b <system>   Accepted and not read: the agent runs the
+                                  commands the coordinator sends
     --tags <tags>                 Comma-separated tags (e.g., gpu=true,arch=arm64)
     --command-template <tpl>      Override commands with template (e.g., "make -C {package} {task}")
   """
@@ -29,7 +30,6 @@ defmodule DxCore.Agents.CLI.Agent do
     :agent_id,
     :session_id,
     :work_dir,
-    :adapter,
     :current_port,
     :current_task_id,
     :current_run_id,
@@ -99,7 +99,6 @@ defmodule DxCore.Agents.CLI.Agent do
     session_id = Keyword.fetch!(opts, :session_id)
     token = Keyword.fetch!(opts, :token)
     work_dir = Keyword.get(opts, :work_dir, ".")
-    build_system = Keyword.get(opts, :build_system, "turbo")
     tags_string = Keyword.get(opts, :tags)
     capabilities = detect_capabilities(tags_string)
     command_template = Keyword.get(opts, :command_template)
@@ -115,16 +114,6 @@ defmodule DxCore.Agents.CLI.Agent do
           System.halt(1)
       end
 
-    adapter =
-      case DxCore.Agents.BuildSystem.resolve(build_system) do
-        {:ok, mod} ->
-          mod
-
-        {:error, msg} ->
-          IO.puts("[agent:#{agent_id}@#{session_id}] #{msg}")
-          System.halt(1)
-      end
-
     IO.puts("[agent:#{agent_id}@#{session_id}] Connecting to coordinator at #{coordinator_url}")
 
     # Use GenServer.start (not start_link) so the monitor alone observes the
@@ -137,7 +126,6 @@ defmodule DxCore.Agents.CLI.Agent do
         session_id: session_id,
         token: token,
         work_dir: work_dir,
-        adapter: adapter,
         capabilities: capabilities,
         command_template: command_template,
         org_slug: org_slug
@@ -187,7 +175,6 @@ defmodule DxCore.Agents.CLI.Agent do
         agent_id: config.agent_id,
         session_id: config.session_id,
         work_dir: config.work_dir,
-        adapter: config.adapter,
         capabilities: config.capabilities,
         command_template: config.command_template,
         org_slug: config.org_slug,

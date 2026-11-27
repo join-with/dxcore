@@ -57,7 +57,8 @@ jobs:
       - uses: join-with/dxcore-dispatch-action@v1
         with:
           coordinator-url: http://coord-${{ github.run_id }}
-          command: npx turbo run build test lint --dry=json
+          # dxcore reads its own task graph; the turbo dry run is converted first.
+          command: npx turbo run build test lint --dry=json | node packages/dxcore-turbo-graph/bin/dxcore-turbo-graph.mjs
           token: ${{ secrets.DXCORE_TOKEN }}
 
   cleanup:

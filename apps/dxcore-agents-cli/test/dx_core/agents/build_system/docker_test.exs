@@ -33,13 +33,9 @@ defmodule DxCore.Agents.BuildSystem.DockerTest do
       assert by_id["gateway"]["dependencies"] == ["api"]
     end
 
-    test "computes dependents from dependencies (inverse mapping)", %{json: json} do
+    test "sends no dependents: the coordinator derives them", %{json: json} do
       assert {:ok, tasks} = Docker.parse_graph(json)
-      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
-
-      assert by_id["api"]["dependents"] == ["gateway"]
-      assert by_id["worker"]["dependents"] == []
-      assert by_id["gateway"]["dependents"] == []
+      refute Enum.any?(tasks, &Map.has_key?(&1, "dependents"))
     end
 
     test "sets hash to empty string and cache to MISS for all tasks", %{json: json} do

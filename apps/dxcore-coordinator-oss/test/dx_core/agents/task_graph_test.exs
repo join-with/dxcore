@@ -61,7 +61,7 @@ defmodule DxCore.Agents.TaskGraphTest do
     end
 
     test "returns error when tasks key is missing" do
-      assert {:error, :missing_tasks_key} = TaskGraph.parse(~s({"id": "no-tasks"}))
+      assert {:error, "the graph has no tasks list"} = TaskGraph.parse(~s({"id": "no-tasks"}))
     end
   end
 

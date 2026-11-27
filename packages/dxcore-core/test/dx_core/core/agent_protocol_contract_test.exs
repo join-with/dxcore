@@ -43,7 +43,7 @@ defmodule DxCore.Core.AgentProtocolContractTest do
 
     # Guards the scan itself: a rewrite of parse_task/1 that the pattern no
     # longer matches would otherwise compare two short lists.
-    assert length(read_by_task_graph) == 11
+    assert length(read_by_task_graph) == 10
     assert Enum.sort(contract()["taskFields"]) == Enum.sort(read_by_task_graph)
   end
 end

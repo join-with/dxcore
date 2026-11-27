@@ -17,8 +17,6 @@ defmodule DxCore.Agents.BuildSystem.Docker do
 
   @behaviour DxCore.Agents.BuildSystem
 
-  alias DxCore.Agents.BuildSystem.GraphHelpers
-
   @impl true
   def parse_graph(json) do
     case Jason.decode(json) do
@@ -35,7 +33,6 @@ defmodule DxCore.Agents.BuildSystem.Docker do
 
   defp normalize_targets(targets) do
     deps_index = Map.new(targets, fn {name, meta} -> {name, extract_deps(meta)} end)
-    dependents_map = GraphHelpers.invert_dependencies(deps_index)
 
     Enum.map(targets, fn {name, meta} ->
       %{
@@ -46,7 +43,6 @@ defmodule DxCore.Agents.BuildSystem.Docker do
         "command" => build_command(meta),
         "cacheable" => has_remote_cache?(meta),
         "dependencies" => Map.get(deps_index, name, []),
-        "dependents" => Map.get(dependents_map, name, []),
         "cache" => %{"status" => "MISS"}
       }
     end)

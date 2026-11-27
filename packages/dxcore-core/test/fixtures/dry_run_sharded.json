@@ -7,7 +7,6 @@
       "hash": "abc",
       "command": "tsc",
       "dependencies": [],
-      "dependents": ["app-e2e#test:shard-1/2", "app-e2e#test:shard-2/2"],
       "cache": {"status": "MISS"}
     },
     {
@@ -17,7 +16,6 @@
       "hash": "def",
       "command": "vitest",
       "dependencies": ["shared#build"],
-      "dependents": [],
       "cache": {"status": "MISS"},
       "shard": {"index": 1, "count": 2}
     },
@@ -28,7 +26,6 @@
       "hash": "def",
       "command": "vitest",
       "dependencies": ["shared#build"],
-      "dependents": [],
       "cache": {"status": "MISS"},
       "shard": {"index": 2, "count": 2}
     }

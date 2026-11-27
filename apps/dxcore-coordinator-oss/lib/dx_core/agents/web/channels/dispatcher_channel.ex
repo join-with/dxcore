@@ -21,15 +21,14 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
     failure_strategy = resolve_failure_strategy(payload)
 
     json = Jason.encode!(%{"tasks" => raw_tasks})
-    {:ok, graph} = DxCore.Core.TaskGraph.parse(json)
 
     # Register run with Sessions (validates tenant ownership and session existence)
-    case Sessions.register_run(scope, session_id, run_id) do
-      :ok ->
-        submit_graph(socket, session_id, run_id, graph, failure_strategy)
-
-      {:error, reason} ->
-        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+    with {:ok, graph} <- parse_graph(json),
+         :ok <- Sessions.register_run(scope, session_id, run_id) do
+      submit_graph(socket, session_id, run_id, graph, failure_strategy)
+    else
+      {:invalid_graph, reply} -> {:reply, {:error, reply}, socket}
+      {:error, reason} -> {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
     end
   end
 
@@ -158,5 +157,14 @@ defmodule DxCore.Agents.Web.DispatcherChannel do
         "total_tasks" => total_tasks,
         "cached_tasks" => cached_tasks
       }}, socket}
+  end
+
+  # dxcore's task graph, which `DxCore.Core.TaskGraph.parse/1` validates; the
+  # dispatcher prints the message.
+  defp parse_graph(json) do
+    case DxCore.Core.TaskGraph.parse(json) do
+      {:ok, graph} -> {:ok, graph}
+      {:error, message} -> {:invalid_graph, %{"reason" => "invalid_graph", "message" => message}}
+    end
   end
 end

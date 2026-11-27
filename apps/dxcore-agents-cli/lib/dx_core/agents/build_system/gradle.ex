@@ -12,8 +12,6 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
 
   @behaviour DxCore.Agents.BuildSystem
 
-  alias DxCore.Agents.BuildSystem.GraphHelpers
-
   @required_fields ~w(taskId package task command)
 
   @impl true
@@ -34,10 +32,9 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
     case Enum.find(tasks, &missing_field?/1) do
       nil ->
         deps_index = Map.new(tasks, fn t -> {t["taskId"], t["dependencies"] || []} end)
-        dependents_map = GraphHelpers.invert_dependencies(deps_index)
 
         normalized =
-          Enum.map(tasks, fn task -> normalize_task(task, deps_index, dependents_map) end)
+          Enum.map(tasks, fn task -> normalize_task(task, deps_index) end)
 
         {:ok, normalized}
 
@@ -51,7 +48,7 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
     Enum.any?(@required_fields, fn f -> not Map.has_key?(task, f) end)
   end
 
-  defp normalize_task(task, deps_index, dependents_map) do
+  defp normalize_task(task, deps_index) do
     id = task["taskId"]
 
     %{
@@ -62,7 +59,6 @@ defmodule DxCore.Agents.BuildSystem.Gradle do
       "cacheable" => Map.get(task, "cacheable", false),
       "hash" => "",
       "dependencies" => Map.get(deps_index, id, []),
-      "dependents" => Map.get(dependents_map, id, []),
       "cache" => %{"status" => "MISS"}
     }
   end

@@ -692,7 +692,6 @@ defmodule DxCore.Core.SchedulerTest do
               "hash" => "abc",
               "command" => "mix compile",
               "dependencies" => [],
-              "dependents" => [],
               "cache" => %{"status" => "MISS"},
               "requirements" => %{"zig" => "true"}
             }

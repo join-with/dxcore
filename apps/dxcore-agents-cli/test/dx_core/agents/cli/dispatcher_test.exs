@@ -223,12 +223,18 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
   end
 
   describe "read_stdin/2" do
-    test "parses turbo JSON from stdin content" do
+    test "parses dxcore's own graph from stdin content" do
       json =
-        ~s({"tasks":[{"taskId":"ui#build","task":"build","package":"ui","hash":"abc","command":"vite build","outputs":[],"dependencies":[],"dependents":[],"cache":{"status":"MISS"}}]})
+        ~s({"tasks":[{"taskId":"ui#build","task":"build","package":"ui","hash":"abc","command":"vite build","dependencies":[],"cacheable":true,"requirements":{"e2e":"true"}}]})
 
-      assert {:ok, [task]} = Dispatcher.read_stdin(json, "turbo")
+      assert {:ok, [task]} = Dispatcher.read_stdin(json, "generic")
       assert task["taskId"] == "ui#build"
+      assert task["requirements"] == %{"e2e" => "true"}
+    end
+
+    test "a turbo dry run is refused with the converter to pipe it through" do
+      assert {:error, message} = Dispatcher.read_stdin(~s({"tasks":[]}), "turbo")
+      assert message =~ "packages/dxcore-turbo-graph/bin/dxcore-turbo-graph.mjs"
     end
 
     test "parses nx JSON from stdin content" do
@@ -239,12 +245,12 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     end
 
     test "returns error for empty input" do
-      assert {:error, msg} = Dispatcher.read_stdin("", "turbo")
+      assert {:error, msg} = Dispatcher.read_stdin("", "generic")
       assert msg =~ "No task graph provided"
     end
 
     test "returns error for whitespace-only input" do
-      assert {:error, msg} = Dispatcher.read_stdin("  \n  ", "turbo")
+      assert {:error, msg} = Dispatcher.read_stdin("  \n  ", "generic")
       assert msg =~ "No task graph provided"
     end
 
@@ -254,11 +260,11 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     end
 
     test "returns error for invalid JSON" do
-      assert {:error, _msg} = Dispatcher.read_stdin("not json", "turbo")
+      assert {:error, _msg} = Dispatcher.read_stdin("not json", "generic")
     end
 
     test "returns error for :eof atom (no piped input)" do
-      assert {:error, msg} = Dispatcher.read_stdin(:eof, "turbo")
+      assert {:error, msg} = Dispatcher.read_stdin(:eof, "generic")
       assert msg =~ "No task graph provided"
     end
   end
@@ -441,31 +447,23 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
                       {:push_and_wait, "submit_graph",
                        %{
                          "run_id" => "r1",
-                         "tasks" => [%{"taskId" => "t1", "requirements" => %{}}],
+                         "tasks" => [%{"taskId" => "t1"}],
                          "shard_config" => %{}
                        }}}
     end
 
-    test "joined with tasks submits only the fields the coordinator reads" do
-      # A turbo --dry=json task, abridged: inputs, outputs, env vars and the
-      # resolved definition are what made an 827-task graph 9 MB.
-      turbo_task = %{
+    test "joined with tasks submits each task as parsed: dxcore's graph, converted nothing" do
+      task = %{
         "taskId" => "@repo/app#test",
         "task" => "test",
         "package" => "@repo/app",
         "hash" => "abc123",
-        "command" => "npx turbo run test --filter=@repo/app",
+        "command" => "npx turbo run test --filter=@repo/app --log-order=stream",
         "dependencies" => ["@repo/app#build"],
-        "dependents" => [],
-        "cache" => %{"status" => "MISS", "local" => false, "remote" => false},
+        "cache" => %{"status" => "MISS"},
         "cacheable" => true,
         "shard" => %{"index" => 0, "count" => 2},
-        "directory" => "apps/app",
-        "inputs" => %{"lib/app.ex" => "f00d", "mix.exs" => "beef"},
-        "outputs" => ["_build/**"],
-        "environmentVariables" => %{"specified" => %{"env" => ["MIX_ENV="]}},
-        "resolvedTaskDefinition" => %{"dependsOn" => ["^build"]},
-        "logFile" => "apps/app/.turbo/turbo-test.log"
+        "requirements" => %{"e2e" => "true"}
       }
 
       test_pid = self()
@@ -479,26 +477,12 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
           end
         end)
 
-      state = base_state(%{client: client, tasks: [turbo_task]})
+      state = base_state(%{client: client, tasks: [task]})
 
       assert {:noreply, _state, 60_000} =
                Dispatcher.handle_info({:joined, "dispatcher:s1"}, state)
 
-      assert_receive {:ws_call, {:push_and_wait, "submit_graph", %{"tasks" => [submitted]}}}
-
-      assert submitted == %{
-               "taskId" => "@repo/app#test",
-               "task" => "test",
-               "package" => "@repo/app",
-               "hash" => "abc123",
-               "command" => "npx turbo run test --filter=@repo/app",
-               "dependencies" => ["@repo/app#build"],
-               "dependents" => [],
-               "cache" => %{"status" => "MISS", "local" => false, "remote" => false},
-               "cacheable" => true,
-               "shard" => %{"index" => 0, "count" => 2},
-               "requirements" => %{}
-             }
+      assert_receive {:ws_call, {:push_and_wait, "submit_graph", %{"tasks" => [^task]}}}
     end
 
     test "joined with tasks submits graph including shard_config" do
@@ -524,7 +508,7 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
                       {:push_and_wait, "submit_graph",
                        %{
                          "run_id" => "r1",
-                         "tasks" => [%{"taskId" => "t1", "requirements" => %{}}],
+                         "tasks" => [%{"taskId" => "t1"}],
                          "shard_config" => %{"e2e-app#test" => 4}
                        }}}
     end
@@ -607,140 +591,6 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
     test "unknown message returns noreply with timeout" do
       state = base_state()
       assert {:noreply, ^state, 60_000} = Dispatcher.handle_info(:something_random, state)
-    end
-  end
-
-  describe "resolve_requirements/1" do
-    setup do
-      # Create temporary package dirs with package.json files
-      tmp_dir = Path.join(System.tmp_dir!(), "dxcore-test-#{System.unique_integer([:positive])}")
-      File.mkdir_p!(Path.join(tmp_dir, "apps/cli"))
-      File.mkdir_p!(Path.join(tmp_dir, "apps/web"))
-      File.mkdir_p!(Path.join(tmp_dir, "packages/lib"))
-
-      # cli: has * default and per-task override
-      File.write!(
-        Path.join(tmp_dir, "apps/cli/package.json"),
-        Jason.encode!(%{
-          "name" => "@repo/cli",
-          "dxcore" => %{
-            "requirements" => %{
-              "*" => %{"zig" => "true"},
-              "release-dev" => %{"zig" => "true", "github-release" => "true"}
-            }
-          }
-        })
-      )
-
-      # web: has docker requirement for all tasks
-      File.write!(
-        Path.join(tmp_dir, "apps/web/package.json"),
-        Jason.encode!(%{
-          "name" => "@repo/web",
-          "dxcore" => %{
-            "requirements" => %{
-              "*" => %{"docker" => "true"}
-            }
-          }
-        })
-      )
-
-      # lib: no dxcore config
-      File.write!(
-        Path.join(tmp_dir, "packages/lib/package.json"),
-        Jason.encode!(%{
-          "name" => "@repo/lib"
-        })
-      )
-
-      on_exit(fn -> File.rm_rf!(tmp_dir) end)
-      %{tmp_dir: tmp_dir}
-    end
-
-    test "resolves exact task name over * default", %{tmp_dir: tmp_dir} do
-      tasks = [
-        %{
-          "taskId" => "cli#release-dev",
-          "task" => "release-dev",
-          "package" => "@repo/cli",
-          "directory" => Path.join(tmp_dir, "apps/cli")
-        }
-      ]
-
-      result = Dispatcher.resolve_requirements(tasks)
-      assert hd(result)["requirements"] == %{"zig" => "true", "github-release" => "true"}
-    end
-
-    test "falls back to * when no exact task match", %{tmp_dir: tmp_dir} do
-      tasks = [
-        %{
-          "taskId" => "cli#build",
-          "task" => "build",
-          "package" => "@repo/cli",
-          "directory" => Path.join(tmp_dir, "apps/cli")
-        }
-      ]
-
-      result = Dispatcher.resolve_requirements(tasks)
-      assert hd(result)["requirements"] == %{"zig" => "true"}
-    end
-
-    test "defaults to empty map when no dxcore config", %{tmp_dir: tmp_dir} do
-      tasks = [
-        %{
-          "taskId" => "lib#build",
-          "task" => "build",
-          "package" => "@repo/lib",
-          "directory" => Path.join(tmp_dir, "packages/lib")
-        }
-      ]
-
-      result = Dispatcher.resolve_requirements(tasks)
-      assert hd(result)["requirements"] == %{}
-    end
-
-    test "handles missing package.json gracefully", %{tmp_dir: tmp_dir} do
-      tasks = [
-        %{
-          "taskId" => "missing#build",
-          "task" => "build",
-          "package" => "@repo/missing",
-          "directory" => Path.join(tmp_dir, "apps/missing")
-        }
-      ]
-
-      result = Dispatcher.resolve_requirements(tasks)
-      assert hd(result)["requirements"] == %{}
-    end
-
-    test "processes multiple tasks from different packages", %{tmp_dir: tmp_dir} do
-      tasks = [
-        %{
-          "taskId" => "cli#build",
-          "task" => "build",
-          "package" => "@repo/cli",
-          "directory" => Path.join(tmp_dir, "apps/cli")
-        },
-        %{
-          "taskId" => "web#build",
-          "task" => "build",
-          "package" => "@repo/web",
-          "directory" => Path.join(tmp_dir, "apps/web")
-        },
-        %{
-          "taskId" => "lib#build",
-          "task" => "build",
-          "package" => "@repo/lib",
-          "directory" => Path.join(tmp_dir, "packages/lib")
-        }
-      ]
-
-      result = Dispatcher.resolve_requirements(tasks)
-      requirements = Enum.map(result, & &1["requirements"])
-
-      assert Enum.at(requirements, 0) == %{"zig" => "true"}
-      assert Enum.at(requirements, 1) == %{"docker" => "true"}
-      assert Enum.at(requirements, 2) == %{}
     end
   end
 
@@ -1455,15 +1305,6 @@ defmodule DxCore.Agents.CLI.DispatcherTest do
         end)
 
       assert out =~ "vitest: 3 passed"
-    end
-
-    test "a task with its own requirements and no directory keeps them" do
-      [task] =
-        Dispatcher.resolve_requirements([
-          %{"taskId" => "a#e2e", "task" => "e2e", "requirements" => %{"docker" => true}}
-        ])
-
-      assert task["requirements"] == %{"docker" => true}
     end
 
     test "a replayed snapshot records the tasks still running" do

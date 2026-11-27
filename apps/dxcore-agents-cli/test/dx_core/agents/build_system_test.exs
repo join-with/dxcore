@@ -4,8 +4,10 @@ defmodule DxCore.Agents.BuildSystemTest do
   alias DxCore.Agents.BuildSystem
 
   describe "resolve/1" do
-    test "resolves turbo to Turbo adapter" do
-      assert {:ok, DxCore.Agents.BuildSystem.Turbo} = BuildSystem.resolve("turbo")
+    test "refuses turbo, naming the converter that writes dxcore's graph" do
+      assert {:error, message} = BuildSystem.resolve("turbo")
+      assert message =~ "dxcore-turbo-graph"
+      assert message =~ "--build-system=generic"
     end
 
     test "resolves nx to Nx adapter" do

@@ -13,7 +13,6 @@
     "hash",
     "command",
     "dependencies",
-    "dependents",
     "cache",
     "cacheable",
     "shard",

@@ -40,18 +40,9 @@ defmodule DxCore.Agents.BuildSystem.GradleTest do
       assert ":app:check" in by_id[":app:build"]["dependencies"]
     end
 
-    test "computes dependents from dependencies", %{json: json} do
+    test "sends no dependents: the coordinator derives them", %{json: json} do
       assert {:ok, tasks} = Gradle.parse_graph(json)
-      by_id = Map.new(tasks, fn t -> {t["taskId"], t} end)
-
-      # lib-core:compileJava is depended on by classes, jar, compileTestJava, and cross-module
-      dependents = by_id[":lib-core:compileJava"]["dependents"]
-      assert ":lib-core:classes" in dependents
-      assert ":lib-core:compileTestJava" in dependents
-      assert ":lib-api:compileJava" in dependents
-
-      # build is a leaf — no dependents
-      assert by_id[":app:build"]["dependents"] == []
+      refute Enum.any?(tasks, &Map.has_key?(&1, "dependents"))
     end
 
     test "preserves cacheable flag", %{json: json} do
