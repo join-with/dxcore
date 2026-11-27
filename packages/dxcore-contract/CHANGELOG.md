@@ -1,5 +1,12 @@
 # @repo/dxcore-contract
 
+## 0.3.0
+
+### Minor Changes
+
+- 5296cea: The plan step sends dxcore's own task graph, converted once (#19431). The new `@repo/dxcore-turbo-graph` is dxcore's one turbo-to-dxcore converter: from a turbo dry run it writes tasks with only the agent protocol's `taskFields`, each `<NONEXISTENT>` placeholder contracted out of its dependents' `dependencies` (cycle-safe, each id once), the turbo command, `cacheable`, the cache status alone and the package's dxcore requirements. `taskFields` drops `dependents`: `DxCore.Core.TaskGraph.parse/1` derives them from `dependencies`, and now only validates (closed field set, unique non-empty ids, dependencies present and distinct, no cycle, bounded sizes), returning one message per refusal. The DTE and both dispatcher channels read through it (the coordinator's `DteRunner.TurboGraph` is deleted; a refused graph fails the DTE's read, or answers `invalid_graph` to the dispatcher). The agents CLI's turbo adapter, `resolve_requirements/1` and `wire_task/1` are deleted: `dxcore dispatch` defaults to `--build-system=generic`, dxcore's own graph sent as given, and `turbo` is refused with the converter to pipe through. ci.yml's plan job converts the dry run once; the sizer and the dispatch graph read the converted graph. PR #19394's affected graph goes from 8,008,871 bytes to about 1 MB.
+  The dispatch action's `build-system` defaults to `generic`, dxcore's own task graph; a turbo dry run is piped through `@repo/dxcore-turbo-graph` first. `TaskGraph.parse/1` also refuses a task without `task`, `package` or `command`.
+
 ## 0.2.0
 
 ### Minor Changes
