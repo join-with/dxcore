@@ -1,0 +1,11 @@
+{
+  "closed_without_run": "failed",
+  "by_result": {
+    "unfinished": "failed",
+    "failed": "failed"
+  },
+  "by_status_without_result": {
+    "failed": "failed"
+  },
+  "otherwise": "succeeded"
+}

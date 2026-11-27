@@ -7,5 +7,13 @@
   },
   "planner": {
     "max_agents_per_run": 8
+  },
+  "plan_request": {
+    "max_tasks": 5000,
+    "max_edges": 100000,
+    "max_string_bytes": 200
+  },
+  "agent_failure": {
+    "max_message_bytes": 1000
   }
 }
