@@ -1,5 +1,11 @@
 # @repo/dxcore-contract
 
+## 0.2.0
+
+### Minor Changes
+
+- cbcfd90: Three more dxcore values are written once, in `@repo/dxcore-contract` (#19349): the plan request's caps (`limits.json` `plan_request`: tasks, dependency edges, string bytes), an agent failure message's size (`limits.json` `agent_failure.max_message_bytes`), and which closed run states fail its agent jobs (the new `agent-verdict.json`). The coordinator's `PlanController`, `AgentSetup` and `Boxes.Leftovers` read them at compile time (`@external_resource`), and CI's pool sizer, failure and verdict scripts import the same files, so the root checks that regex-read the coordinator's source for these values are gone.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @repo/dxcore-agents-cli
 
+## 0.11.14
+
+### Patch Changes
+
+- Updated dependencies [cbcfd90]
+  - @repo/dxcore-contract@0.2.0
+
 ## 0.11.13
 
 ### Patch Changes
